@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Металлоёмкость производственных зданий — Android-версия на Kivy/KivyMD
-Расчётное ядро идентично main.py (Метод 1 + Метод 2).
+Все таблицы вшиты в код, внешние файлы не требуются.
 """
 import os
 import sys
@@ -9,24 +9,7 @@ import math
 import traceback
 
 # ─────────────────────────────────────────────────────────
-#  ПУТИ (одинаково работает как на Android, так и на ПК)
-# ─────────────────────────────────────────────────────────
-if getattr(sys, "frozen", False):
-    BASE_DIR = sys._MEIPASS
-elif os.environ.get("ANDROID_ARGUMENT"):          # Buildozer runtime
-    from android.storage import app_storage_path  # type: ignore
-    BASE_DIR = app_storage_path()
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-DATA_DIR         = os.path.join(BASE_DIR, "Тип 1 здания с кранами")
-POKRYTIE_XLSX    = os.path.join(DATA_DIR, "металлоекмсоть покрытия.xlsx")
-FAKHVERK_XLSX    = os.path.join(DATA_DIR, "Металлоёмкость фахверк.xlsx")
-CRANE_BEAMS_DOCX = os.path.join(DATA_DIR, "Таблица металлоемкости на подкрановые конструкции.docx")
-BRAKE_DOCX       = os.path.join(DATA_DIR, "Таблица металлоемкости на тормозные конструкции.docx")
-
-# ─────────────────────────────────────────────────────────
-#  РАСЧЁТНОЕ ЯДРО (скопировано из main.py без изменений)
+#  HARDCODED ДАННЫЕ (Метод 1)
 # ─────────────────────────────────────────────────────────
 PURLIN_TABLE = [
     (0.45, 110.4, 220.8,  "Швеллер 20"),
@@ -45,6 +28,57 @@ CRANE_Q_EQUIV    = {5:8,10:12,20:20,32:28,50:38,80:55,
 BEAM_HEIGHT_RATIO = {20:(1/7,1/9),32:(1/7,1/9),50:(1/6,1/8.5),
                      80:(1/6,1/7.5),100:(1/6,1/7),125:(1/6,1/7)}
 
+# ─────────────────────────────────────────────────────────
+#  HARDCODED ТАБЛИЦЫ (Метод 2)
+# ─────────────────────────────────────────────────────────
+TRUSS_LOADS = [2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,
+               6.5,7.0,7.5,8.0,8.5,9.0,9.5,10.0,10.5,
+               11.0,11.5,12.0,12.5]
+TRUSS_MASSES = {
+    "Уголки": {
+        36:[5.90,7.54,10.37,11.12,12.30,12.74,13.30,14.74,15.66,15.66,18.89,18.89,18.89,19.30,21.50,21.50,22.52,23.70,24.57,24.57,26.30,26.92],
+        30:[5.20,5.97,6.47,7.14,7.14,7.70,9.00,9.00,10.20,10.20,10.53,11.64,13.63,13.63,14.43,14.43,15.25,15.25,16.43,16.43,16.43,17.27],
+        24:[2.30,3.16,3.94,3.97,4.29,5.75,5.75,6.28,6.28,6.28,6.53,6.53,6.90,7.97,8.87,8.87,8.87,8.87,8.87,9.11,10.45,11.24],
+        18:[2.16,2.16,2.34,2.45,2.68,2.68,2.83,2.91,3.17,3.64,3.64,3.77,3.95,3.95,4.10,4.10,4.51,4.51,4.51,5.26,5.26,5.26],
+    },
+    "Двутавры": {
+        36:[9.60,10.20,10.20,11.47,12.50,13.49,15.14,15.28,15.87,17.18,18.72,21.06,21.06,21.06,22.11,22.11,25.52,25.52,30.78,31.66,31.66,31.85],
+        30:[6.27,6.38,6.38,8.07,8.23,8.90,9.84,9.93,10.35,12.99,12.99,12.99,12.99,14.89,14.89,14.89,15.35,18.68,18.68,18.68,19.69,19.69],
+        24:[4.60,4.60,5.19,5.30,5.79,5.79,6.35,6.63,7.48,8.31,8.31,8.47,8.47,8.63,9.30,9.30,11.08,11.08,11.08,11.08,11.08,12.10],
+        18:[2.92,2.92,2.92,2.92,3.37,3.92,3.92,3.92,4.34,4.34,4.34,4.72,4.72,4.72,4.72,4.72,5.42,5.42,5.49,5.49,5.86,5.86],
+    },
+    "Молодечно": {
+        36:[7.00,8.05,9.20,12.25,13.53,13.53,15.96,17.18,17.61,21.26,21.26,23.01,24.25,29.80,29.80,29.80,29.80,29.80,31.57,37.40,37.40,37.40],
+        30:[5.24,5.80,5.80,7.34,7.34,11.55,10.40,11.97,11.97,13.59,13.59,13.59,15.40,16.22,17.70,19.54,19.54,19.54,21.37,21.37,21.37,21.37],
+        24:[2.48,3.60,3.85,4.11,5.07,5.07,6.18,6.24,6.47,8.02,8.02,8.70,9.37,9.37,10.00,10.90,10.90,11.54,11.54,12.37,13.62,13.62],
+        18:[1.29,1.54,1.58,2.07,2.18,2.65,3.40,3.40,3.40,3.40,4.08,4.08,4.08,4.70,4.83,4.83,5.70,6.07,6.07,6.07,6.07,7.08],
+    },
+}
+SUBTRUSS_LOADS  = [18.0,36.0,54.0,72.0,81.0,108.0,126.0,144.0,162.0,180.0,198.0,216.0,234.0,255.0]
+SUBTRUSS_MASSES = [1.57,2.22,2.31,2.72,2.72,4.59,5.32,5.32,5.70,5.80,6.30,6.30,6.53,6.71]
+FAKHVERK_DATA = {
+    ('I',0,0):9,  ('I',0,1):10, ('I',0,2):11,
+    ('I',1,0):9,  ('I',1,1):11, ('I',1,2):11,
+    ('I',2,0):10, ('I',2,1):12, ('I',2,2):12,
+    ('II',0,0):23,('II',0,1):25,('II',0,2):25,
+    ('II',1,0):23,('II',1,1):25,('II',1,2):25,
+    ('II',2,0):26,('II',2,1):30,('II',2,2):30,
+    ('III',0,0):19,('III',0,1):28,('III',0,2):45,
+    ('III',1,0):19,('III',1,1):29,('III',1,2):46,
+    ('III',2,0):20,('III',2,1):30,('III',2,2):48,
+}
+_CB_Q1=[5,10,20,32,50]; _CB_Q2=[80,100,125,200,400]
+CRANE_BEAM_T1={6:[80,85,90,190,200,100,240,250,105,140],12:[150,160,320,350,180,200,390,440,220,470]}
+CRANE_BEAM_T2={12:[290,320,380,940,980,300,330,500,350,540],18:[460,480,500,1020,1080,490,520,540,1120,1180],24:[680,720,780,1040,1120,820,920,1620,1840,880]}
+BRAKE_T1={(6,True,True):[100,110],(6,True,False):[65,70],(6,False,True):[120,140],(6,False,False):[70,75],
+          (12,True,True):[100,120],(12,True,False):[65,70],(12,False,True):[100,120],(12,False,False):[70,75]}
+BRAKE_T2={(12,True,True):[120,140],(12,True,False):[80,100],(12,False,True):[140,160],(12,False,False):[60,80],
+          (18,True,True):[120,140],(18,True,False):[80,100],(18,False,True):[140,160],(18,False,False):[80,100],
+          (24,True,True):[220,240],(24,True,False):[140,160],(24,False,True):[220,240],(24,False,False):[140,160]}
+
+# ─────────────────────────────────────────────────────────
+#  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ─────────────────────────────────────────────────────────
 def _lookup(d, val):
     for k in sorted(d):
         if val <= k: return d[k]
@@ -67,123 +101,57 @@ def ceil_to_table(target, values):
         if target <= v: return v
     return sorted(values)[-1]
 
-def _read_pokrytie():
-    import pandas as pd
-    return pd.read_excel(POKRYTIE_XLSX, header=None, sheet_name=0)
+def get_truss_mass(truss_type, span_m, load_tm):
+    spans = sorted(TRUSS_MASSES.get(truss_type, {}).keys())
+    if not spans: return None
+    span_key = ceil_to_table(span_m, spans)
+    masses = TRUSS_MASSES[truss_type].get(span_key)
+    if masses is None: return None
+    return interp_table(TRUSS_LOADS, masses, load_tm)
 
-def _read_fakhverk():
-    import pandas as pd
-    return pd.read_excel(FAKHVERK_XLSX, header=None, sheet_name="Расчеты")
-
-def get_truss_mass(df, truss_type, span_m, load_tm):
-    type_map = {"Уголки":"Фермы из уголков",
-                "Двутавры":"Фермы из двутавров",
-                "Молодечно":"Фермы молодечно"}
-    sec = type_map.get(truss_type, "Фермы из уголков")
-    span_lbl = f"Пролет {int(span_m)}м"
-    sec_row = None
-    for i, row in df.iterrows():
-        if str(row[0]).strip() == sec: sec_row = i; break
-    if sec_row is None: return None
-    span_row = None
-    for i in range(sec_row, min(sec_row+10, len(df))):
-        if str(df.iloc[i,0]).strip() == span_lbl: span_row = i; break
-    if span_row is None: return None
-    loads, masses = [], []
-    for col in range(1, len(df.iloc[span_row+1])):
-        try:
-            loads.append(float(df.iloc[span_row+1, col]))
-            masses.append(float(df.iloc[span_row+2, col]))
-        except: pass
-    if not loads: return None
-    return interp_table(loads, masses, load_tm)
-
-def get_subtruss_mass(df, R_t):
-    sub_row = None
-    for i, row in df.iterrows():
-        if str(row[0]).strip() == "Подстропильные фермы": sub_row = i; break
-    if sub_row is None: return None
-    loads, masses = [], []
-    for col in range(1, len(df.iloc[sub_row+1])):
-        try:
-            loads.append(float(df.iloc[sub_row+1, col]))
-            masses.append(float(df.iloc[sub_row+2, col]))
-        except: pass
-    if not loads: return None
-    return interp_table(loads, masses, ceil_to_table(R_t, loads))
+def get_subtruss_mass(R_t):
+    R_ceil = ceil_to_table(R_t, SUBTRUSS_LOADS)
+    return interp_table(SUBTRUSS_LOADS, SUBTRUSS_MASSES, R_ceil)
 
 def get_bracing(q_t, bstep):
     if q_t <= 120: return 15.0 if bstep <= 6 else 35.0
     return 40.0 if bstep <= 6 else 55.0
 
-def _parse_docx_rows(path, tidx):
-    from docx import Document
-    doc = Document(path)
-    result = []
-    for row in doc.tables[tidx].rows:
-        seen, cells = set(), []
-        for cell in row.cells:
-            t = cell.text.strip().replace('\n',' ')
-            if t not in seen: cells.append(t); seen.add(t)
-        if any(c.strip() for c in cells): result.append(cells)
-    return result
-
 def get_crane_beam_kgm(q_t, span_m, n_cranes):
     try:
-        if q_t <= 50:
-            rows = _parse_docx_rows(CRANE_BEAMS_DOCX, 0)
-            ss = f"{int(span_m)} м"
-            for row in rows:
-                if row and ss in row[0]:
-                    vals=[float(c) for c in row[1:] if _is_num(c)]
-                    if not vals: return None
-                    q_ord=[5,10,20,32,50]
-                    qi=min(range(len(q_ord)),key=lambda i:abs(q_ord[i]-q_t))
-                    ci=qi*2+(0 if n_cranes==1 else 1)
-                    return vals[ci] if ci<len(vals) else vals[0]
-        else:
-            rows = _parse_docx_rows(CRANE_BEAMS_DOCX, 1)
-            ss = str(int(span_m))
-            for row in rows:
-                if row and row[0].startswith(ss):
-                    vals=[float(c) for c in row[1:] if _is_num(c)]
-                    if not vals: return None
-                    q_ord=[80,100,125,200,400]
-                    qi=min(range(len(q_ord)),key=lambda i:abs(q_ord[i]-q_t))
-                    ci=qi*2+(0 if n_cranes==1 else 1)
-                    return vals[ci] if ci<len(vals) else vals[0]
-    except: pass
-    return None
+        if q_t <= 50: table, q_ord = CRANE_BEAM_T1, _CB_Q1
+        else:         table, q_ord = CRANE_BEAM_T2, _CB_Q2
+        spans = sorted(table.keys())
+        span_key = ceil_to_table(span_m, spans)
+        vals = table.get(span_key)
+        if vals is None: return None
+        qi = min(range(len(q_ord)), key=lambda i: abs(q_ord[i]-q_t))
+        ci = qi*2 + (0 if n_cranes==1 else 1)
+        return vals[ci] if ci < len(vals) else None
+    except: return None
 
 def get_brake_kgm(q_t, span_m, n_cranes, with_pass, is_edge):
     try:
-        tidx = 0 if q_t<=50 else 1
-        rows = _parse_docx_rows(BRAKE_DOCX, tidx)
-        ss = f"{int(span_m)} м"
-        rt = "Крайний" if is_edge else "Средний"
-        pt = "С проходом" if with_pass else "Без прохода"
-        for row in rows:
-            rf = " ".join(row)
-            if (row and ss in row[0]) and rt in rf and pt in rf:
-                vals=[float(c) for c in row if _is_num(c)]
-                if vals:
-                    return vals[0 if n_cranes==1 else min(1,len(vals)-1)]
+        table = BRAKE_T1 if q_t<=50 else BRAKE_T2
+        spans = sorted({k[0] for k in table})
+        span_key = ceil_to_table(span_m, spans)
+        vals = table.get((span_key, is_edge, with_pass))
+        if vals is None:
+            vals = next((v for k,v in table.items() if k[0]==span_key), None)
+        if vals:
+            return vals[0 if n_cranes==1 else min(1,len(vals)-1)]
     except: pass
     return None
 
-def get_fakhverk_kgm2(df, step_col, has_post, h_bld, rig_load):
+def get_fakhverk_kgm2(step_col, has_post, h_bld, rig_load):
     try:
-        if step_col<=6 and has_post: tr=7
-        elif step_col<=6: tr=5
-        else: tr=6
-        lc = 2 if rig_load<=0 else (5 if rig_load<=100 else 8)
-        ho = 0 if h_bld<=10 else (1 if h_bld<=20 else 2)
-        return float(df.iloc[tr, lc+ho])
+        if step_col<=6 and has_post: ft='III'
+        elif step_col<=6: ft='I'
+        else: ft='II'
+        lc = 0 if rig_load<=0 else (1 if rig_load<=100 else 2)
+        hc = 0 if h_bld<=10 else (1 if h_bld<=20 else 2)
+        return FAKHVERK_DATA.get((ft, lc, hc))
     except: return None
-
-def _is_num(s):
-    try: float(s); return True
-    except: return False
 
 def calculate(params):
     L_build=params["L_build"]; W_build=params["W_build"]
@@ -196,15 +164,7 @@ def calculate(params):
     with_pass=params["with_pass"]; rig_load=params["rig_load"]
     has_post=params["has_post"]; bld_type=params["bld_type"]
 
-    missing=[f for f in[POKRYTIE_XLSX,FAKHVERK_XLSX,CRANE_BEAMS_DOCX,BRAKE_DOCX]
-             if not os.path.exists(f)]
-    if missing: raise FileNotFoundError("Файлы не найдены:\n"+"\n".join(
-        os.path.basename(f) for f in missing))
-
-    df_cov = _read_pokrytie()
-    df_fakh= _read_fakhverk()
-    res={}; log=[]
-
+    res={}
     S_floor=L_build*W_build; P_walls=2*(L_build+W_build)
     H_lower=h_rail
 
@@ -226,12 +186,11 @@ def calculate(params):
         G_t=G_kn/9.81
         n_tr=L_build/B_step+1
         g_m1=round(G_t*1000*n_tr/S_floor,2)
-    mtr=get_truss_mass(df_cov,truss_type,L_span,Q_tm)
-    g_m2=None; G_tr1_kg=None
+    mtr=get_truss_mass(truss_type,L_span,Q_tm)
+    g_m2=None
     if mtr is not None:
         n_tr=L_build/B_step+1
         g_m2=round(mtr*1000*n_tr/S_floor,2)
-        G_tr1_kg=mtr*1000
     res["фермы"]=dict(нагрузка_тм=round(Q_tm,3),М1=g_m1 or "н/п",М2=g_m2 or "н/п",
         масса_т_М2=round(g_m2*S_floor/1000,2) if g_m2 else "н/п")
 
@@ -243,11 +202,11 @@ def calculate(params):
     if col_step==12 and B_step<col_step:
         R_kn=Q_tm*9.81*L_span/2; R_t=R_kn/9.81
         Rf=max(100,min(R_kn,400)); a=(Rf-100)*0.0002+0.044
-        G_pf_t=a*144/9.81
+        G_pf_t=a*144
         n_sub=(L_build/col_step)*(max(0,round(W_build/L_span)-1))
         if n_sub<=0: n_sub=L_build/col_step
         g_s1=round(G_pf_t*1000*n_sub/S_floor,2)
-        ms=get_subtruss_mass(df_cov,R_t)
+        ms=get_subtruss_mass(R_t)
         g_s2=round(ms*1000*n_sub/S_floor,2) if ms else "н/п"
         res["подстроп"]=dict(R_кн=round(R_kn,1),М1=g_s1,М2=g_s2)
     else:
@@ -268,11 +227,10 @@ def calculate(params):
     g_pb_m2="н/п"
     if pb_e and br_e is not None:
         G_e=(pb_e+(br_e or 0))*L_pb*n_along*n_edge/1000
-        G_m=(((pb_m or 0)+(br_m or 0))*L_pb*n_along*n_mid/1000)
+        G_m=((pb_m or 0)+(br_m or 0))*L_pb*n_along*n_mid/1000
         g_pb_m2=round((G_e+G_m)*1000/S_floor,2)
     res["подкрановые"]=dict(G_1пб_т=round(G_pb_t,2),
-        М1=g_pb_m1, М2=g_pb_m2,
-        балка_кгм=pb_e, тормоз_кгм=br_e)
+        М1=g_pb_m1, М2=g_pb_m2, балка_кгм=pb_e, тормоз_кгм=br_e)
 
     # 6. КОЛОННЫ
     rho=78.5; pu=1.4; pl=2.1; kmu=0.275; kml=0.45
@@ -285,7 +243,7 @@ def calculate(params):
     gst=0.25; aw=0.15
     Gw_up=gst*H_upper*(1-aw)*col_step
     Gw_lo=gst*H_lower*(1-aw)*col_step
-    SFv=( Q_roof+Q_purlin+Q_snow+Q_dust)*col_step*L_span/2+Gw_up
+    SFv=(Q_roof+Q_purlin+Q_snow+Q_dust)*col_step*L_span/2+Gw_up
     Gcu=SFv*rho*pu*H_upper/(kmu*24000)
     qeq=_lookup(CRANE_Q_EQUIV,q_crane_t)
     D=qeq*col_step*1.1*yc
@@ -299,7 +257,7 @@ def calculate(params):
         масса_т=round(Gc_kg*nc/1000,2))
 
     # 7. ФАХВЕРК
-    gf=get_fakhverk_kgm2(df_fakh,col_step,has_post,H_full,rig_load)
+    gf=get_fakhverk_kgm2(col_step,has_post,H_full,rig_load)
     if gf:
         res["фахверк"]=dict(расход_кгм2_стен=gf, масса_т=round(gf*S_walls/1000,2))
     else:
@@ -327,8 +285,8 @@ def calculate(params):
          +sf(res["колонны"],"масса_т"))
     tm2=(sf(res["прогоны"],"масса_т")+sf(res["фермы"],"масса_т_М2")
          +sf(res["связи"],"масса_т")
-         +sf(res.get("подстроп",{}),"масса_т_М2",)*S_floor/1000
-         +sf(res["подкрановые"],"масса_т_М2")*S_floor/1000
+         +sf(res.get("подстроп",{}),"М2")*S_floor/1000
+         +sf(res["подкрановые"],"М2")*S_floor/1000
          +sf(res["колонны"],"масса_т")
          +sf(res["фахверк"],"масса_т")
          +sf(res["опоры"],"масса_т"))

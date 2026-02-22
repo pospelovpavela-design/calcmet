@@ -4,7 +4,7 @@ package.name = metalcalc
 package.domain = ru.metalcalc
 
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas,xlsx,docx
+source.include_exts = py,png,jpg,kv,atlas
 
 # Главный файл
 source.main = main_android.py
@@ -12,8 +12,8 @@ source.main = main_android.py
 # Версия
 version = 1.0.0
 
-# Зависимости Python
-requirements = python3,kivy==2.3.1,kivymd==1.2.0,pandas,openpyxl,python-docx,lxml,pillow
+# Зависимости Python (таблицы вшиты в код — pandas/docx не нужны)
+requirements = python3,kivy==2.3.1,kivymd==1.2.0,pillow
 
 # Ориентация: портрет + альбомная
 orientation = portrait
