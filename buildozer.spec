@@ -5,7 +5,8 @@ package.domain = ru.metalcalc
 
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
-source.exclude_dirs = dist,build,.buildozer,методичка,Metal Consumption Calculator. 3.2F Release,Metal Consumption Calculator. 3.2F Release 2
+source.exclude_dirs = dist,build,.buildozer
+source.exclude_patterns = main.py,metal.spec,metal_windows.spec,build_windows.bat,requirements.txt
 
 # Главный файл
 source.main = main_android.py
