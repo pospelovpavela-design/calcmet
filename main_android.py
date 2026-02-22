@@ -316,11 +316,7 @@ from kivymd.uix.textfield import MDTextField
 from kivymd.uix.label import MDLabel
 from kivymd.uix.button import MDRaisedButton, MDFlatButton
 from kivymd.uix.selectioncontrol import MDCheckbox
-from kivymd.uix.menu import MDDropdownMenu
-from kivymd.uix.scrollview import MDScrollView
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.snackbar import Snackbar
-from kivymd.uix.dialog import MDDialog
 from kivymd.uix.toolbar import MDTopAppBar
 from kivy.metrics import dp
 from kivy.clock import Clock
@@ -545,8 +541,7 @@ class MetalApp(MDApp):
         self.sm.current = "input"
 
     def do_calculate(self):
-        Snackbar(text="Выполняется расчёт…", duration=1).open()
-        Clock.schedule_once(self._run_calc, 0.3)
+        Clock.schedule_once(self._run_calc, 0.1)
 
     def _run_calc(self, dt):
         try:
