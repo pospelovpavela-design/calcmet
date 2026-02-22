@@ -19,17 +19,14 @@ requirements = python3,kivy==2.3.1,kivymd==1.2.0,pillow
 orientation = portrait
 
 # Android
-android.permissions = INTERNET,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE
+android.permissions = WRITE_EXTERNAL_STORAGE
 android.api = 33
 android.minapi = 21
 android.ndk = 25b
-android.sdk = 33
-android.ndk_path =
-android.sdk_path =
 android.accept_sdk_license = True
 
-# Архитектуры (arm64 для современных устройств)
-android.archs = arm64-v8a, armeabi-v7a
+# Только arm64 — быстрее сборка, все современные телефоны
+android.archs = arm64-v8a
 
 # Логотип и иконка (можно заменить своими)
 # android.icon.filename = %(source.dir)s/icon.png
