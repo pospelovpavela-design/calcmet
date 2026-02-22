@@ -8,6 +8,24 @@ import sys
 import math
 import traceback
 
+# ── Запись краша в файл (читать через менеджер файлов: Загрузки/metalcalc_crash.log) ──
+def _save_crash(exc_type, exc_value, exc_tb):
+    text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    for path in [
+        "/sdcard/Download/metalcalc_crash.log",
+        "/storage/emulated/0/Download/metalcalc_crash.log",
+        os.path.join(os.path.expanduser("~"), "metalcalc_crash.log"),
+    ]:
+        try:
+            with open(path, "w") as f:
+                f.write(text)
+            break
+        except Exception:
+            continue
+    sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+sys.excepthook = _save_crash
+
 # ─────────────────────────────────────────────────────────
 #  HARDCODED ДАННЫЕ (Метод 1)
 # ─────────────────────────────────────────────────────────
@@ -304,23 +322,20 @@ from kivy.config import Config
 Config.set("graphics","minimum_width","360")
 Config.set("graphics","minimum_height","640")
 
-from kivy.app import App
 from kivy.lang import Builder
-from kivy.uix.screenmanager import ScreenManager, Screen
-from kivy.core.window import Window
+from kivy.uix.button import Button
+from kivy.metrics import dp
+from kivy.clock import Clock
+from kivy.uix.spinner import Spinner
 
 from kivymd.app import MDApp
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.screenmanager import MDScreenManager
 from kivymd.uix.textfield import MDTextField
 from kivymd.uix.label import MDLabel
-from kivymd.uix.button import MDRaisedButton, MDFlatButton
 from kivymd.uix.selectioncontrol import MDCheckbox
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.toolbar import MDTopAppBar
-from kivy.metrics import dp
-from kivy.clock import Clock
-from kivy.uix.spinner import Spinner
 
 KV = """
 #:import dp kivy.metrics.dp
@@ -353,14 +368,17 @@ MDScreenManager:
             height: dp(56)
             padding: dp(8), dp(4)
             spacing: dp(8)
-            MDRaisedButton:
+            Button:
                 text: "РАССЧИТАТЬ"
                 on_release: app.do_calculate()
                 size_hint_x: 1
-                md_bg_color: app.theme_cls.primary_color
-            MDFlatButton:
+                background_color: 0.18, 0.45, 0.8, 1
+            Button:
                 text: "СБРОС"
                 on_release: app.do_reset()
+                size_hint_x: None
+                width: dp(90)
+                background_color: 0.3, 0.3, 0.3, 1
 
 <ResultScreen>:
     name: "result"
