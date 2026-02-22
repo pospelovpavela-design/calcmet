@@ -8,7 +8,7 @@ import customtkinter
 CTK_DIR = os.path.dirname(customtkinter.__file__)
 
 a = Analysis(
-    ["main.py"],
+    ["main_desktop.py"],
     pathex=["."],
     binaries=[],
     datas=[

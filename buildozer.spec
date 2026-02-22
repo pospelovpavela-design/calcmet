@@ -6,10 +6,7 @@ package.domain = ru.metalcalc
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 source.exclude_dirs = dist,build,.buildozer
-source.exclude_patterns = main.py,metal.spec,metal_windows.spec,build_windows.bat,requirements.txt
-
-# Главный файл
-source.main = main_android.py
+source.exclude_patterns = main_desktop.py,metal.spec,metal_windows.spec,build_windows.bat,requirements.txt
 
 # Версия
 version = 1.0.0
