@@ -5,6 +5,7 @@ package.domain = ru.metalcalc
 
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
+source.exclude_dirs = dist,build,.buildozer,методичка,Metal Consumption Calculator. 3.2F Release,Metal Consumption Calculator. 3.2F Release 2
 
 # Главный файл
 source.main = main_android.py
@@ -13,7 +14,7 @@ source.main = main_android.py
 version = 1.0.0
 
 # Зависимости Python (таблицы вшиты в код — pandas/docx не нужны)
-requirements = python3,kivy==2.3.1,pillow
+requirements = python3,kivy==2.2.1
 
 # Ориентация: портрет + альбомная
 orientation = portrait
