@@ -1,0 +1,48 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+    # ── 1. Получить код ───────────────────────────────────
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # ── 2. Python 3.11 ────────────────────────────────────
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    # ── 3. Зависимости ────────────────────────────────────
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install customtkinter pyinstaller
+
+    # ── 4. Сборка одного EXE ──────────────────────────────
+    - name: Build EXE
+      run: |
+        pyinstaller metal_windows.spec
+
+    # ── 5. Загрузить EXE как артефакт ─────────────────────
+    - name: Upload EXE
+      uses: actions/upload-artifact@v4
+      with:
+        name: Calcmet-EXE
+        path: dist/Calcmet.exe
+        if-no-files-found: error
+
+    # ── 6. Показать лог при ошибке ────────────────────────
+    - name: Show error details
+      if: failure()
+      run: |
+        dir dist\ 2>nul || echo "dist folder empty"
+        dir build\ 2>nul || echo "build folder empty"

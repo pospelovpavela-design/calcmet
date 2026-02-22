@@ -1,0 +1,72 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:       # запуск вручную из GitHub UI
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+    # ── 1. Получить код ───────────────────────────────────
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # ── 2. Python ─────────────────────────────────────────
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    # ── 3. Зависимости сборки ─────────────────────────────
+    - name: Install system deps
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends \
+          git zip unzip openjdk-17-jdk \
+          autoconf libtool pkg-config \
+          zlib1g-dev libncurses5-dev libncursesw5-dev \
+          libssl-dev libffi-dev libsqlite3-dev \
+          libltdl-dev libgdbm-dev python3-dev \
+          ccache
+
+    # ── 4. Buildozer ──────────────────────────────────────
+    - name: Install Buildozer
+      run: |
+        pip install --upgrade pip
+        pip install buildozer cython virtualenv
+
+    # ── 5. Кэш Android SDK/NDK (ускоряет повторные билды) ─
+    - name: Cache Buildozer
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.buildozer
+          ~/.gradle
+        key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+        restore-keys: |
+          buildozer-${{ runner.os }}-
+
+    # ── 6. Сборка APK ─────────────────────────────────────
+    - name: Build APK
+      env:
+        ANDROIDSDK: ${{ github.workspace }}/.buildozer/android/platform/android-sdk
+        ANDROIDNDK: ${{ github.workspace }}/.buildozer/android/platform/android-ndk-r25b
+      run: |
+        buildozer -v android debug 2>&1 | tee build.log
+
+    # ── 7. Загрузить APK как артефакт ─────────────────────
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: MetalCalc-APK
+        path: bin/*.apk
+        if-no-files-found: error
+
+    # ── 8. Показать лог при ошибке ────────────────────────
+    - name: Show build log on failure
+      if: failure()
+      run: tail -200 build.log || true
