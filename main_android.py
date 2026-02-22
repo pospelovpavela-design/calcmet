@@ -316,174 +316,232 @@ def calculate(params):
 
 
 # ─────────────────────────────────────────────────────────
-#  KIVY UI
+#  KIVY UI  (чистый Kivy, без KivyMD)
 # ─────────────────────────────────────────────────────────
 from kivy.config import Config
-Config.set("graphics","minimum_width","360")
-Config.set("graphics","minimum_height","640")
+Config.set("graphics", "minimum_width", "360")
+Config.set("graphics", "minimum_height", "640")
 
+from kivy.app import App
 from kivy.lang import Builder
+from kivy.uix.screenmanager import ScreenManager, Screen
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.textinput import TextInput
+from kivy.uix.label import Label
 from kivy.uix.button import Button
+from kivy.uix.spinner import Spinner
+from kivy.uix.checkbox import CheckBox
 from kivy.metrics import dp
 from kivy.clock import Clock
-from kivy.uix.spinner import Spinner
 
-from kivymd.app import MDApp
-from kivymd.uix.screen import MDScreen
-from kivymd.uix.screenmanager import MDScreenManager
-from kivymd.uix.textfield import MDTextField
-from kivymd.uix.label import MDLabel
-from kivymd.uix.selectioncontrol import MDCheckbox
-from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.toolbar import MDTopAppBar
+_BLUE  = (0.18, 0.45, 0.8, 1)
+_DARK  = (0.13, 0.13, 0.13, 1)
+_GRAY  = (0.25, 0.25, 0.25, 1)
 
 KV = """
 #:import dp kivy.metrics.dp
 
-MDScreenManager:
+ScreenManager:
     InputScreen:
     ResultScreen:
 
+<_Toolbar@BoxLayout>:
+    title: ""
+    back: False
+    size_hint_y: None
+    height: dp(50)
+    canvas.before:
+        Color:
+            rgba: 0.18, 0.45, 0.8, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+    Button:
+        text: "<"
+        size_hint_x: None
+        width: dp(50) if root.back else 0
+        opacity: 1 if root.back else 0
+        on_release: app.go_back()
+        background_color: 0, 0, 0, 0
+        bold: True
+        font_size: dp(20)
+    Label:
+        text: root.title
+        bold: True
+        font_size: dp(17)
+        halign: "left"
+        padding_x: dp(8)
+
 <InputScreen>:
     name: "input"
-    MDBoxLayout:
+    BoxLayout:
         orientation: "vertical"
-        MDTopAppBar:
+        canvas.before:
+            Color:
+                rgba: 0.13, 0.13, 0.13, 1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        _Toolbar:
             title: "Металлоёмкость зданий"
-            elevation: 4
-            left_action_items: []
-            md_bg_color: app.theme_cls.primary_color
         ScrollView:
-            MDBoxLayout:
+            BoxLayout:
                 id: form
                 orientation: "vertical"
-                padding: dp(16)
-                spacing: dp(8)
+                padding: dp(12)
+                spacing: dp(6)
                 size_hint_y: None
                 height: self.minimum_height
-
-        MDBoxLayout:
-            orientation: "horizontal"
+        BoxLayout:
             size_hint_y: None
-            height: dp(56)
+            height: dp(54)
             padding: dp(8), dp(4)
             spacing: dp(8)
+            canvas.before:
+                Color:
+                    rgba: 0.18, 0.18, 0.18, 1
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
             Button:
                 text: "РАССЧИТАТЬ"
                 on_release: app.do_calculate()
-                size_hint_x: 1
                 background_color: 0.18, 0.45, 0.8, 1
+                bold: True
+                font_size: dp(14)
             Button:
                 text: "СБРОС"
                 on_release: app.do_reset()
                 size_hint_x: None
-                width: dp(90)
-                background_color: 0.3, 0.3, 0.3, 1
+                width: dp(100)
+                background_color: 0.35, 0.35, 0.35, 1
 
 <ResultScreen>:
     name: "result"
-    MDBoxLayout:
+    BoxLayout:
         orientation: "vertical"
-        MDTopAppBar:
+        canvas.before:
+            Color:
+                rgba: 0.13, 0.13, 0.13, 1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        _Toolbar:
             title: "Результаты"
-            elevation: 4
-            left_action_items: [["arrow-left", lambda x: app.go_back()]]
-            md_bg_color: app.theme_cls.primary_color
+            back: True
         ScrollView:
-            MDLabel:
+            Label:
                 id: result_text
                 text: ""
-                font_name: "Roboto"
+                color: 1, 1, 1, 1
                 size_hint_y: None
                 height: self.texture_size[1]
+                text_size: self.width, None
                 padding: dp(12), dp(8)
                 markup: True
+                font_size: dp(13)
 """
 
 
-class InputScreen(MDScreen):
+class InputScreen(Screen):
     pass
 
 
-class ResultScreen(MDScreen):
+class ResultScreen(Screen):
     pass
 
 
-class MetalApp(MDApp):
+class MetalApp(App):
 
     def build(self):
-        self.theme_cls.primary_palette = "Blue"
-        self.theme_cls.theme_style = "Dark"
         self.title = "Металлоёмкость зданий v1.0"
         root = Builder.load_string(KV)
         self.sm = root
         self._build_form(root.get_screen("input").ids.form)
         return root
 
-    # ── Построение формы ─────────────────────────────────
-
-    def _field(self, label, default, hint=""):
-        box = MDBoxLayout(orientation="vertical", size_hint_y=None,
-                          height=dp(72), spacing=0)
-        tf = MDTextField(
-            hint_text=label,
-            helper_text=hint,
-            helper_text_mode="on_focus",
-            text=str(default),
-            input_filter="float",
-            size_hint_y=None, height=dp(64),
-        )
-        box.add_widget(tf)
-        return box, tf
+    # ── Вспомогательные виджеты ──────────────────────────
 
     def _section(self, title):
-        lbl = MDLabel(text=f"[b]{title}[/b]", markup=True,
-                      theme_text_color="Primary",
-                      size_hint_y=None, height=dp(36))
+        lbl = Label(
+            text=f"[b][color=4fc3f7]{title}[/color][/b]",
+            markup=True,
+            size_hint_y=None, height=dp(38),
+            halign="left", valign="middle",
+            font_size=dp(14),
+        )
+        lbl.bind(size=lbl.setter("text_size"))
         return lbl
 
+    def _field(self, label, default):
+        box = BoxLayout(orientation="vertical", size_hint_y=None,
+                        height=dp(68), spacing=dp(2))
+        lbl = Label(text=label, size_hint_y=None, height=dp(22),
+                    halign="left", valign="middle",
+                    font_size=dp(12), color=(0.8, 0.8, 0.8, 1))
+        lbl.bind(size=lbl.setter("text_size"))
+        ti = TextInput(
+            text=str(default),
+            multiline=False,
+            input_filter="float",
+            size_hint_y=None, height=dp(38),
+            background_color=(0.22, 0.22, 0.22, 1),
+            foreground_color=(1, 1, 1, 1),
+            cursor_color=(0.4, 0.7, 1, 1),
+            font_size=dp(15),
+        )
+        box.add_widget(lbl)
+        box.add_widget(ti)
+        return box, ti
+
     def _spinner_row(self, label, values, default):
-        box = MDBoxLayout(orientation="vertical", size_hint_y=None, height=dp(80))
-        box.add_widget(MDLabel(text=label, size_hint_y=None, height=dp(28),
-                               font_style="Caption"))
+        box = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(68),
+                        spacing=dp(2))
+        lbl = Label(text=label, size_hint_y=None, height=dp(22),
+                    halign="left", valign="middle",
+                    font_size=dp(12), color=(0.8, 0.8, 0.8, 1))
+        lbl.bind(size=lbl.setter("text_size"))
         sp = Spinner(text=default, values=values,
-                     size_hint=(1, None), height=dp(44),
-                     background_color=(0.2, 0.45, 0.8, 1),
-                     color=(1,1,1,1))
+                     size_hint=(1, None), height=dp(38),
+                     background_color=_BLUE, color=(1, 1, 1, 1),
+                     font_size=dp(14))
+        box.add_widget(lbl)
         box.add_widget(sp)
         return box, sp
 
     def _checkbox_row(self, label):
-        box = MDBoxLayout(orientation="horizontal", size_hint_y=None,
-                          height=dp(48), spacing=dp(8))
-        cb = MDCheckbox(size_hint=(None, None), size=(dp(40), dp(40)))
+        box = BoxLayout(orientation="horizontal", size_hint_y=None,
+                        height=dp(44), spacing=dp(8))
+        cb = CheckBox(size_hint=(None, 1), width=dp(44),
+                      color=_BLUE)
+        lbl = Label(text=label, halign="left", valign="middle",
+                    font_size=dp(13), color=(0.9, 0.9, 0.9, 1))
+        lbl.bind(size=lbl.setter("text_size"))
         box.add_widget(cb)
-        box.add_widget(MDLabel(text=label))
+        box.add_widget(lbl)
         return box, cb
 
     def _build_form(self, form):
         F = form
         fields = {}
-        def s(t): F.add_widget(self._section(t))
-        def f(k, label, default, hint=""):
-            box, tf = self._field(label, default, hint)
-            F.add_widget(box)
-            fields[k] = tf
+        def s(t):  F.add_widget(self._section(t))
+        def f(k, label, default):
+            box, ti = self._field(label, default)
+            F.add_widget(box); fields[k] = ti
         def sp(k, label, values, default):
             box, spinner = self._spinner_row(label, values, default)
-            F.add_widget(box)
-            fields[k] = spinner
+            F.add_widget(box); fields[k] = spinner
         def cb(k, label):
             box, checkbox = self._checkbox_row(label)
-            F.add_widget(box)
-            fields[k] = checkbox
+            F.add_widget(box); fields[k] = checkbox
 
         s("Геометрия здания")
         f("L_build", "Длина здания по осям, м", 120)
         f("W_build", "Ширина здания, м", 48)
         f("L_span",  "Пролёт фермы L, м", 24)
         f("B_step",  "Шаг ферм B, м", 6)
-        sp("col_step","Шаг колонн, м", ["6","12"], "12")
+        sp("col_step", "Шаг колонн, м", ["6", "12"], "12")
         f("h_rail",  "Уровень головки рельса, м", 8.0)
 
         s("Нагрузки (расчётные, кН/м²)")
@@ -491,23 +549,26 @@ class MetalApp(MDApp):
         f("Q_dust",   "Пыль (Qпыль)", 0.0)
         f("Q_roof",   "Кровля (Qкровля)", 0.65)
         f("Q_purlin", "Вес прогона (Qвес.прог.)", 0.35)
-        f("yc",       "Коэф. уровня ответственности γc", 1.0)
+        f("yc",       "Коэф. ответственности γc", 1.0)
 
         s("Стропильные фермы")
-        sp("truss_type","Тип фермы",["Уголки","Двутавры","Молодечно"],"Уголки")
+        sp("truss_type", "Тип фермы", ["Уголки", "Двутавры", "Молодечно"], "Уголки")
 
         s("Мостовой кран")
-        f("q_crane_t","Грузоподъёмность крана, т", 50)
-        sp("n_cranes","Кол-во кранов в пролёте",["1","2"],"1")
-        sp("with_pass","Тормозные пути",["С проходом","Без прохода"],"С проходом")
+        f("q_crane_t", "Грузоподъёмность крана, т", 50)
+        sp("n_cranes", "Кол-во кранов в пролёте", ["1", "2"], "1")
+        sp("with_pass", "Тормозные пути",
+           ["С проходом", "Без прохода"], "С проходом")
 
         s("Фахверк")
-        f("rig_load","Нагрузка на ригели фахверка, кг/м.п.", 0)
-        cb("has_post","Наличие стойки фахверка (шаг 12 м)")
+        f("rig_load", "Нагрузка на ригели, кг/м.п.", 0)
+        cb("has_post", "Наличие стойки фахверка (шаг 12 м)")
 
         s("Тип здания (опоры трубопроводов)")
-        sp("bld_type","Тип здания",
-           ["Основные производственные","Здания энергоносителей","Вспомогательные здания"],
+        sp("bld_type", "Тип здания",
+           ["Основные производственные",
+            "Здания энергоносителей",
+            "Вспомогательные здания"],
            "Основные производственные")
 
         self._fields = fields
@@ -517,37 +578,36 @@ class MetalApp(MDApp):
     def _get(self, key, default=0.0):
         w = self._fields.get(key)
         if w is None: return default
-        if hasattr(w, "text") and hasattr(w, "input_filter"):  # TextField
-            try: return float(w.text.replace(",","."))
+        if isinstance(w, TextInput):
+            try: return float(w.text.replace(",", "."))
             except: return default
-        if hasattr(w, "text"):  # Spinner
+        if isinstance(w, Spinner):
             return w.text
-        if hasattr(w, "active"):  # Checkbox
+        if isinstance(w, CheckBox):
             return w.active
         return default
 
     def _read_params(self):
         col_step = int(self._get("col_step", "12"))
-        has_post = bool(self._get("has_post")) and col_step == 12
         return {
-            "L_build":   self._get("L_build", 120),
-            "W_build":   self._get("W_build", 48),
-            "L_span":    self._get("L_span",  24),
-            "B_step":    self._get("B_step",  6),
-            "col_step":  col_step,
-            "h_rail":    self._get("h_rail",  8),
-            "Q_snow":    self._get("Q_snow",  2.1),
-            "Q_dust":    self._get("Q_dust",  0),
-            "Q_roof":    self._get("Q_roof",  0.65),
-            "Q_purlin":  self._get("Q_purlin",0.35),
-            "yc":        self._get("yc",      1.0),
-            "truss_type":self._get("truss_type","Уголки"),
-            "q_crane_t": self._get("q_crane_t",50),
-            "n_cranes":  int(self._get("n_cranes","1")),
-            "with_pass": self._get("with_pass","С проходом") == "С проходом",
-            "rig_load":  self._get("rig_load",0),
-            "has_post":  has_post,
-            "bld_type":  self._get("bld_type","Основные производственные"),
+            "L_build":    self._get("L_build", 120),
+            "W_build":    self._get("W_build", 48),
+            "L_span":     self._get("L_span",  24),
+            "B_step":     self._get("B_step",  6),
+            "col_step":   col_step,
+            "h_rail":     self._get("h_rail",  8),
+            "Q_snow":     self._get("Q_snow",  2.1),
+            "Q_dust":     self._get("Q_dust",  0),
+            "Q_roof":     self._get("Q_roof",  0.65),
+            "Q_purlin":   self._get("Q_purlin", 0.35),
+            "yc":         self._get("yc",       1.0),
+            "truss_type": self._get("truss_type", "Уголки"),
+            "q_crane_t":  self._get("q_crane_t", 50),
+            "n_cranes":   int(self._get("n_cranes", "1")),
+            "with_pass":  self._get("with_pass", "С проходом") == "С проходом",
+            "rig_load":   self._get("rig_load", 0),
+            "has_post":   bool(self._get("has_post")) and col_step == 12,
+            "bld_type":   self._get("bld_type", "Основные производственные"),
         }
 
     # ── Навигация и действия ─────────────────────────────
@@ -566,12 +626,12 @@ class MetalApp(MDApp):
             params = self._read_params()
             res = calculate(params)
             self._show_results(res)
-        except FileNotFoundError as e:
-            Snackbar(text=f"Файлы не найдены: {e}", duration=4).open()
         except Exception:
             tb = traceback.format_exc()
             screen = self.sm.get_screen("result")
-            screen.ids.result_text.text = f"[color=ff4444]ОШИБКА:[/color]\n{tb}"
+            screen.ids.result_text.text = (
+                "[color=ff6666]ОШИБКА РАСЧЁТА:[/color]\n" + tb
+            )
             self.sm.current = "result"
 
     def _show_results(self, res):

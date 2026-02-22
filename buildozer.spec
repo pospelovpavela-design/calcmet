@@ -13,7 +13,7 @@ source.main = main_android.py
 version = 1.0.0
 
 # Зависимости Python (таблицы вшиты в код — pandas/docx не нужны)
-requirements = python3,kivy==2.3.1,kivymd==1.2.0,pillow
+requirements = python3,kivy==2.3.1,pillow
 
 # Ориентация: портрет + альбомная
 orientation = portrait
