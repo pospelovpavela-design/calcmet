@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Расчётный модуль металлоёмкости производственных зданий с мостовыми кранами.
-Метод 1 — эмпирические формулы.
-Метод 2 — таблицы (вшиты в код, внешние файлы не требуются).
+Расчетный модуль металлоемкости производственных зданий с мостовыми кранами.
+Метод 1 — эмпирические формулы (hardcoded).
+Метод 2 — чтение таблиц из xlsx/docx.
 """
 
 import os
@@ -10,8 +10,26 @@ import sys
 import math
 import traceback
 import customtkinter as ctk
-from tkinter import messagebox
+from tkinter import messagebox, scrolledtext
 import tkinter as tk
+import pandas as pd
+from docx import Document
+
+# ─────────────────────────────────────────────────────────
+#  ПУТИ К ДАННЫМ  (работает и как скрипт, и в PyInstaller-бандле)
+# ─────────────────────────────────────────────────────────
+if getattr(sys, "frozen", False):
+    # Запущен как .app / .exe (PyInstaller)
+    BASE_DIR = sys._MEIPASS
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+DATA_DIR  = os.path.join(BASE_DIR, "Тип 1 здания с кранами")
+
+POKRYTIE_XLSX  = os.path.join(DATA_DIR, "металлоекмсоть покрытия.xlsx")
+FAKHVERK_XLSX  = os.path.join(DATA_DIR, "Металлоёмкость фахверк.xlsx")
+CRANE_BEAMS_DOCX = os.path.join(DATA_DIR, "Таблица металлоемкости на подкрановые конструкции.docx")
+BRAKE_DOCX       = os.path.join(DATA_DIR, "Таблица металлоемкости на тормозные конструкции.docx")
 
 # ─────────────────────────────────────────────────────────
 #  HARDCODED ДАННЫЕ (Метод 1)
@@ -27,7 +45,11 @@ PURLIN_TABLE = [
     (2.50, 220.8,  441.6, "2×Швеллер 20"),
 ]
 
-# Коэффициент αпб для подкрановых балок по г/п крана (кН/м/м)
+# Коэффициент αпф для подстропильных ферм
+# αпф = (R - 100)*0.0002 + 0.044, R кН (диапазон 100-400 кН)
+# Lпф = 12 м (шаг колонн)
+
+# Коэффициент αпб для подкрановых балок по г/п крана (кН/м на м)
 CRANE_BEAM_ALPHA = {
     5:   0.08,
     10:  0.09,
@@ -44,32 +66,33 @@ CRANE_BEAM_ALPHA = {
 
 # Вес рельса qр (кН/м) по г/п крана
 RAIL_WEIGHT_KN = {
-    5:   0.461,
+    5:   0.461,   # КР-70
     10:  0.461,
     20:  0.461,
-    32:  0.598,
+    32:  0.598,   # КР-80
     50:  0.598,
-    80:  0.831,
-    100: 1.135,
+    80:  0.831,   # КР-100
+    100: 1.135,   # КР-120
     125: 1.135,
     200: 1.135,
-    320: 1.417,
+    320: 1.417,   # КР-140
     400: 1.417,
 }
 
-# Высота балки (отн. Lпб): (г/п: hб/Lпб при шаге 6м, при 12м)
+# Высота балки (отн. Lпб) для расчёта Н-верх: (г/п: hб/Lпб при шаге 6м, при 12м)
 BEAM_HEIGHT_RATIO = {
-    20:  (1/7,   1/9),
-    32:  (1/7,   1/9),
-    50:  (1/6,   1/8.5),
-    80:  (1/6,   1/7.5),
-    100: (1/6,   1/7),
-    125: (1/6,   1/7),
-    160: (1/6,   1/7),
-    200: (1/6,   1/7),
+    20:  (1/7,  1/9),
+    32:  (1/7,  1/9),
+    50:  (1/6,  1/8.5),
+    80:  (1/6,  1/7.5),
+    100: (1/6,  1/7),
+    125: (1/6,  1/7),
+    160: (1/6,  1/7),
+    200: (1/6,  1/7),
 }
 
-# Нормативные эквивалентные нагрузки q (кН/м) по г/п крана
+# Нормативные эквивалентные нагрузки q (кН/м) — Таблица 6.2 в методике
+# Значения по г/п крана (типовые для режима 5К, ГОСТ 1575)
 CRANE_Q_EQUIV = {
     5:   8,
     10:  12,
@@ -84,127 +107,12 @@ CRANE_Q_EQUIV = {
     400: 175,
 }
 
-# ─────────────────────────────────────────────────────────
-#  HARDCODED ТАБЛИЦЫ (Метод 2)
-# ─────────────────────────────────────────────────────────
-
-# Нагрузки для таблиц ферм (т/м.п.)
-TRUSS_LOADS = [2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0,
-               6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0, 10.5,
-               11.0, 11.5, 12.0, 12.5]
-
-# Масса 1 стропильной фермы (т) по типу и пролёту
-# Источник: металлоекмсоть покрытия.xlsx
-TRUSS_MASSES = {
-    "Уголки": {
-        36: [5.90, 7.54, 10.37, 11.12, 12.30, 12.74, 13.30, 14.74, 15.66,
-             15.66, 18.89, 18.89, 18.89, 19.30, 21.50, 21.50, 22.52, 23.70,
-             24.57, 24.57, 26.30, 26.92],
-        30: [5.20, 5.97, 6.47, 7.14, 7.14, 7.70, 9.00, 9.00, 10.20,
-             10.20, 10.53, 11.64, 13.63, 13.63, 14.43, 14.43, 15.25, 15.25,
-             16.43, 16.43, 16.43, 17.27],
-        24: [2.30, 3.16, 3.94, 3.97, 4.29, 5.75, 5.75, 6.28, 6.28,
-             6.28, 6.53, 6.53, 6.90, 7.97, 8.87, 8.87, 8.87, 8.87,
-             8.87, 9.11, 10.45, 11.24],
-        18: [2.16, 2.16, 2.34, 2.45, 2.68, 2.68, 2.83, 2.91, 3.17,
-             3.64, 3.64, 3.77, 3.95, 3.95, 4.10, 4.10, 4.51, 4.51,
-             4.51, 5.26, 5.26, 5.26],
-    },
-    "Двутавры": {
-        36: [9.60, 10.20, 10.20, 11.47, 12.50, 13.49, 15.14, 15.28, 15.87,
-             17.18, 18.72, 21.06, 21.06, 21.06, 22.11, 22.11, 25.52, 25.52,
-             30.78, 31.66, 31.66, 31.85],
-        30: [6.27, 6.38, 6.38, 8.07, 8.23, 8.90, 9.84, 9.93, 10.35,
-             12.99, 12.99, 12.99, 12.99, 14.89, 14.89, 14.89, 15.35, 18.68,
-             18.68, 18.68, 19.69, 19.69],
-        24: [4.60, 4.60, 5.19, 5.30, 5.79, 5.79, 6.35, 6.63, 7.48,
-             8.31, 8.31, 8.47, 8.47, 8.63, 9.30, 9.30, 11.08, 11.08,
-             11.08, 11.08, 11.08, 12.10],
-        18: [2.92, 2.92, 2.92, 2.92, 3.37, 3.92, 3.92, 3.92, 4.34,
-             4.34, 4.34, 4.72, 4.72, 4.72, 4.72, 4.72, 5.42, 5.42,
-             5.49, 5.49, 5.86, 5.86],
-    },
-    "Молодечно": {
-        36: [7.00, 8.05, 9.20, 12.25, 13.53, 13.53, 15.96, 17.18, 17.61,
-             21.26, 21.26, 23.01, 24.25, 29.80, 29.80, 29.80, 29.80, 29.80,
-             31.57, 37.40, 37.40, 37.40],
-        30: [5.24, 5.80, 5.80, 7.34, 7.34, 11.55, 10.40, 11.97, 11.97,
-             13.59, 13.59, 13.59, 15.40, 16.22, 17.70, 19.54, 19.54, 19.54,
-             21.37, 21.37, 21.37, 21.37],
-        24: [2.48, 3.60, 3.85, 4.11, 5.07, 5.07, 6.18, 6.24, 6.47,
-             8.02, 8.02, 8.70, 9.37, 9.37, 10.00, 10.90, 10.90, 11.54,
-             11.54, 12.37, 13.62, 13.62],
-        18: [1.29, 1.54, 1.58, 2.07, 2.18, 2.65, 3.40, 3.40, 3.40,
-             3.40, 4.08, 4.08, 4.08, 4.70, 4.83, 4.83, 5.70, 6.07,
-             6.07, 6.07, 6.07, 7.08],
-    },
-}
-
-# Подстропильные фермы: нагрузка (т) → масса 1 фермы (т)
-# Источник: металлоекмсоть покрытия.xlsx
-SUBTRUSS_LOADS  = [18.0, 36.0, 54.0, 72.0, 81.0, 108.0, 126.0, 144.0,
-                   162.0, 180.0, 198.0, 216.0, 234.0, 255.0]
-SUBTRUSS_MASSES = [1.57, 2.22, 2.31, 2.72, 2.72, 4.59, 5.32, 5.32,
-                   5.70, 5.80, 6.30, 6.30, 6.53, 6.71]
-
-# Фахверк: (тип, категория нагрузки, категория высоты) → кг/м² стены
-# тип: 'I' (пролёт 6м без стойки), 'II' (пролёт 12м без стойки), 'III' (пролёт 6м со стойкой)
-# нагрузка: 0=без нагрузки, 1=100 кг/м.п., 2=300 кг/м.п.
-# высота: 0=до 10м, 1=до 20м, 2=до 40м
-# Источник: Металлоёмкость фахверк.xlsx (лист Расчеты)
-FAKHVERK_DATA = {
-    ('I',   0, 0):  9,  ('I',   0, 1): 10, ('I',   0, 2): 11,
-    ('I',   1, 0):  9,  ('I',   1, 1): 11, ('I',   1, 2): 11,
-    ('I',   2, 0): 10,  ('I',   2, 1): 12, ('I',   2, 2): 12,
-    ('II',  0, 0): 23,  ('II',  0, 1): 25, ('II',  0, 2): 25,
-    ('II',  1, 0): 23,  ('II',  1, 1): 25, ('II',  1, 2): 25,
-    ('II',  2, 0): 26,  ('II',  2, 1): 30, ('II',  2, 2): 30,
-    ('III', 0, 0): 19,  ('III', 0, 1): 28, ('III', 0, 2): 45,
-    ('III', 1, 0): 19,  ('III', 1, 1): 29, ('III', 1, 2): 46,
-    ('III', 2, 0): 20,  ('III', 2, 1): 30, ('III', 2, 2): 48,
-}
-
-# Подкрановые балки: значения кг/м по позиции
-# Индекс: q_order[i]*2 + (0 если 1 кран, 1 если 2 крана)
-# Источник: Таблица металлоемкости на подкрановые конструкции.docx
-_CB_Q1 = [5, 10, 20, 32, 50]      # г/п для таблицы 1
-_CB_Q2 = [80, 100, 125, 200, 400]  # г/п для таблицы 2
-
-CRANE_BEAM_T1 = {   # г/п 5–50 т
-    6:  [80, 85, 90, 190, 200, 100, 240, 250, 105, 140],
-    12: [150, 160, 320, 350, 180, 200, 390, 440, 220, 470],
-}
-CRANE_BEAM_T2 = {   # г/п 80–400 т
-    12: [290, 320, 380, 940,  980, 300,  330, 500, 350, 540],
-    18: [460, 480, 500, 1020, 1080, 490, 520, 540, 1120, 1180],
-    24: [680, 720, 780, 1040, 1120, 820, 920, 1620, 1840, 880],
-}
-
-# Тормозные конструкции: (пролёт, крайний ряд, с проходом) → [val_1к, val_2к]
-# Источник: Таблица металлоемкости на тормозные конструкции.docx
-BRAKE_T1 = {   # г/п 5–50 т
-    (6,  True,  True):  [100, 110],
-    (6,  True,  False): [65,  70],
-    (6,  False, True):  [120, 140],
-    (6,  False, False): [70,  75],
-    (12, True,  True):  [100, 120],
-    (12, True,  False): [65,  70],
-    (12, False, True):  [100, 120],
-    (12, False, False): [70,  75],
-}
-BRAKE_T2 = {   # г/п 80–400 т
-    (12, True,  True):  [120, 140],
-    (12, True,  False): [80,  100],
-    (12, False, True):  [140, 160],
-    (12, False, False): [60,  80],
-    (18, True,  True):  [120, 140],
-    (18, True,  False): [80,  100],
-    (18, False, True):  [140, 160],
-    (18, False, False): [80,  100],
-    (24, True,  True):  [220, 240],
-    (24, True,  False): [140, 160],
-    (24, False, True):  [220, 240],
-    (24, False, False): [140, 160],
+# Связи покрытия — кг/м2 (из покрытие.xlsx, горизонтальные связи)
+BRACING_COVERAGE = {
+    # (г/п крана <= 120т, шаг ферм 6м): 15 кг/м2
+    # (г/п крана <= 120т, шаг ферм 12м): 35 кг/м2
+    # (г/п крана <= 400т, шаг ферм 6м): 40 кг/м2
+    # (г/п крана <= 400т, шаг ферм 12м): 55 кг/м2
 }
 
 # ─────────────────────────────────────────────────────────
@@ -212,6 +120,7 @@ BRAKE_T2 = {   # г/п 80–400 т
 # ─────────────────────────────────────────────────────────
 
 def closest_alpha_pb(q_kn: float) -> float:
+    """Вернуть αпб для г/п крана (кН)."""
     caps = sorted(CRANE_BEAM_ALPHA.keys())
     for cap in caps:
         if q_kn <= cap:
@@ -220,6 +129,7 @@ def closest_alpha_pb(q_kn: float) -> float:
 
 
 def rail_weight(q_kn: float) -> float:
+    """Вес рельса qр (кН/м) для г/п крана (кН)."""
     caps = sorted(RAIL_WEIGHT_KN.keys())
     for cap in caps:
         if q_kn <= cap:
@@ -228,6 +138,7 @@ def rail_weight(q_kn: float) -> float:
 
 
 def q_equiv(q_kn: float) -> float:
+    """Нормативная эквивалентная нагрузка q (кН/м) для г/п крана."""
     caps = sorted(CRANE_Q_EQUIV.keys())
     for cap in caps:
         if q_kn <= cap:
@@ -236,16 +147,22 @@ def q_equiv(q_kn: float) -> float:
 
 
 def select_purlin(load_tm: float, span_m: float):
+    """
+    Подобрать прогон по расчётной нагрузке (т/м) и пролёту (6 или 12 м).
+    Возвращает (масса кг, имя профиля).
+    """
     for max_load, mass_6, mass_12, name in PURLIN_TABLE:
         if load_tm <= max_load:
             mass = mass_6 if span_m <= 6 else mass_12
             return mass, name
+    # Если нагрузка превысила таблицу — взять наибольший
     _, mass_6, mass_12, name = PURLIN_TABLE[-1]
     mass = mass_6 if span_m <= 6 else mass_12
     return mass, f"{name} (нагрузка превышает таблицу!)"
 
 
 def interp_table(loads, masses, target):
+    """Линейная интерполяция/ближайшее большее в таблице."""
     for i, ld in enumerate(loads):
         if target <= ld:
             return masses[i]
@@ -253,6 +170,7 @@ def interp_table(loads, masses, target):
 
 
 def ceil_to_table(target, values):
+    """Округлить до ближайшего большего значения из списка."""
     for v in sorted(values):
         if target <= v:
             return v
@@ -260,124 +178,299 @@ def ceil_to_table(target, values):
 
 
 # ─────────────────────────────────────────────────────────
-#  ФУНКЦИИ ТАБЛИЦ (Метод 2) — все данные вшиты в код
+#  ФУНКЦИИ ЧТЕНИЯ ТАБЛИЦ (Метод 2)
 # ─────────────────────────────────────────────────────────
 
-def get_truss_mass_m2(truss_type: str, span_m: float, load_tm: float) -> tuple:
-    """Масса 1 стропильной фермы (т) из встроенной таблицы."""
-    spans_avail = sorted(TRUSS_MASSES.get(truss_type, {}).keys())
-    if not spans_avail:
-        return None, f"Тип фермы '{truss_type}' не найден"
-    span_key = ceil_to_table(span_m, spans_avail)
-    masses = TRUSS_MASSES[truss_type].get(span_key)
-    if masses is None:
-        return None, f"Пролёт {span_m}м не найден"
-    mass = interp_table(TRUSS_LOADS, masses, load_tm)
-    return mass, f"{truss_type} пролёт {span_key}м"
+def read_pokrytie() -> pd.DataFrame:
+    return pd.read_excel(POKRYTIE_XLSX, header=None, sheet_name=0)
 
 
-def get_subtruss_mass_m2(R_t: float) -> float:
-    """Масса 1 подстропильной фермы (т) из встроенной таблицы."""
-    R_ceil = ceil_to_table(R_t, SUBTRUSS_LOADS)
-    return interp_table(SUBTRUSS_LOADS, SUBTRUSS_MASSES, R_ceil)
+def read_fakhverk() -> pd.DataFrame:
+    return pd.read_excel(FAKHVERK_XLSX, header=None, sheet_name="Расчеты")
+
+
+def get_truss_mass_m2(
+    df_cov: pd.DataFrame,
+    truss_type: str,  # "Уголки", "Двутавры", "Молодечно"
+    span_m: float,    # пролёт здания (L)
+    load_tm: float,   # нагрузка т/м.п. на ферму
+) -> tuple:
+    """
+    Вернуть (масса 1 фермы т, имя секции).
+    Поиск по таблице покрытие.xlsx.
+    """
+    type_map = {
+        "Уголки":   "Фермы из уголков",
+        "Двутавры": "Фермы из двутавров",
+        "Молодечно": "Фермы молодечно",
+    }
+    section_label = type_map.get(truss_type, "Фермы из уголков")
+    span_label = f"Пролет {int(span_m)}м"
+
+    # Найти строку-заголовок секции
+    section_row = None
+    for i, row in df_cov.iterrows():
+        if str(row[0]).strip() == section_label:
+            section_row = i
+            break
+    if section_row is None:
+        return None, f"Секция '{section_label}' не найдена"
+
+    # Найти строку пролёта внутри секции
+    span_row = None
+    for i in range(section_row, min(section_row + 10, len(df_cov))):
+        if str(df_cov.iloc[i, 0]).strip() == span_label:
+            span_row = i
+            break
+    if span_row is None:
+        return None, f"Пролёт '{span_label}' не найден в секции"
+
+    loads_row  = df_cov.iloc[span_row + 1]
+    masses_row = df_cov.iloc[span_row + 2]
+
+    loads  = []
+    masses = []
+    for col in range(1, len(loads_row)):
+        try:
+            ld = float(loads_row[col])
+            ms = float(masses_row[col])
+            loads.append(ld)
+            masses.append(ms)
+        except (ValueError, TypeError):
+            pass
+
+    if not loads:
+        return None, "Данные нагрузок не найдены"
+
+    mass = interp_table(loads, masses, load_tm)
+    return mass, f"{section_label} пролёт {int(span_m)}м"
+
+
+def get_subtruss_mass_m2(df_cov: pd.DataFrame, R_t: float) -> float:
+    """
+    Масса 1 подстропильной фермы по нагрузке R (тонн).
+    Из таблицы покрытие.xlsx.
+    """
+    sub_row = None
+    for i, row in df_cov.iterrows():
+        if str(row[0]).strip() == "Подстропильные фермы":
+            sub_row = i
+            break
+    if sub_row is None:
+        return None
+
+    loads_row  = df_cov.iloc[sub_row + 1]
+    masses_row = df_cov.iloc[sub_row + 2]
+
+    loads  = []
+    masses = []
+    for col in range(1, len(loads_row)):
+        try:
+            ld = float(loads_row[col])
+            ms = float(masses_row[col])
+            loads.append(ld)
+            masses.append(ms)
+        except (ValueError, TypeError):
+            pass
+
+    if not loads:
+        return None
+
+    # Округлить R до ближайшего большего
+    R_ceil = ceil_to_table(R_t, loads)
+    return interp_table(loads, masses, R_ceil)
 
 
 def get_bracing_kgm2(q_crane_t: float, step_farm_m: float) -> float:
-    """Расход стали на связи покрытия (кг/м²)."""
+    """Расход стали на связи покрытия (кг/м2) из таблицы."""
     if q_crane_t <= 120:
         return 15.0 if step_farm_m <= 6 else 35.0
     else:
         return 40.0 if step_farm_m <= 6 else 55.0
 
 
-def get_crane_beam_kgm_m2(q_crane_t: float, span_pb_m: float, n_cranes: int):
-    """Металлоёмкость подкрановой балки (кг/м) из встроенной таблицы."""
+def _parse_docx_table_simple(doc_path: str, table_idx: int) -> list:
+    """Вернуть список списков строк ячеек docx-таблицы (уникальные по строке)."""
+    doc = Document(doc_path)
+    table = doc.tables[table_idx]
+    result = []
+    for row in table.rows:
+        seen = set()
+        cells = []
+        for cell in row.cells:
+            txt = cell.text.strip().replace('\n', ' ')
+            if txt not in seen:
+                cells.append(txt)
+                seen.add(txt)
+        if any(c.strip() for c in cells):
+            result.append(cells)
+    return result
+
+
+def get_crane_beam_kgm_m2(
+    q_crane_t: float,   # г/п крана, т
+    span_pb_m: float,   # пролёт п/б = шаг колонн, м
+    n_cranes: int,      # количество кранов
+) -> float:
+    """
+    Металлоемкость подкрановой балки (кг/м) из таблицы docx.
+    Возвращает кг/м или None.
+    """
     try:
+        # Таблица 1: Q=5-50т
         if q_crane_t <= 50:
-            table  = CRANE_BEAM_T1
-            q_ord  = _CB_Q1
+            rows = _parse_docx_table_simple(CRANE_BEAMS_DOCX, 0)
+            # Ищем строку с нужным пролётом
+            span_str = f"{int(span_pb_m)} м"
+            for row in rows:
+                if row and span_str in row[0]:
+                    # Определить индекс столбца по г/п и кол-ву кранов
+                    # Структура: пролет | данные по Q=5,10,20,32,50 и режимам
+                    # Упрощение: берём данные по позиции
+                    vals = []
+                    for c in row[1:]:
+                        try:
+                            vals.append(float(c))
+                        except (ValueError, TypeError):
+                            pass
+                    if not vals:
+                        return None
+                    # Карта: (Q_t, n_cranes) → индекс (приблизительный)
+                    # Таблица 1 строка 6м: [5т_1к, 5т_2к, ...10т..., ...50т...]
+                    # Используем позицию: каждые 2 значения на г/п
+                    q_order = [5, 10, 20, 32, 50]
+                    try:
+                        q_idx = min(range(len(q_order)),
+                                    key=lambda i: abs(q_order[i] - q_crane_t))
+                        crane_idx = q_idx * 2 + (0 if n_cranes == 1 else 1)
+                        if crane_idx < len(vals):
+                            return vals[crane_idx]
+                    except Exception:
+                        return vals[0]
+        # Таблица 2: Q=80-400т
         else:
-            table  = CRANE_BEAM_T2
-            q_ord  = _CB_Q2
-
-        # Выбрать ближайший пролёт из таблицы
-        spans = sorted(table.keys())
-        span_key = ceil_to_table(span_pb_m, spans)
-        vals = table.get(span_key)
-        if vals is None:
-            return None
-
-        q_idx    = min(range(len(q_ord)), key=lambda i: abs(q_ord[i] - q_crane_t))
-        c_idx    = q_idx * 2 + (0 if n_cranes == 1 else 1)
-        if c_idx < len(vals):
-            return vals[c_idx]
+            rows = _parse_docx_table_simple(CRANE_BEAMS_DOCX, 1)
+            span_str = str(int(span_pb_m))
+            for row in rows:
+                if row and row[0].startswith(span_str):
+                    vals = []
+                    for c in row[1:]:
+                        try:
+                            vals.append(float(c))
+                        except (ValueError, TypeError):
+                            pass
+                    if not vals:
+                        return None
+                    q_order = [80, 100, 125, 200, 400]
+                    try:
+                        q_idx = min(range(len(q_order)),
+                                    key=lambda i: abs(q_order[i] - q_crane_t))
+                        crane_idx = q_idx * 2 + (0 if n_cranes == 1 else 1)
+                        if crane_idx < len(vals):
+                            return vals[crane_idx]
+                    except Exception:
+                        return vals[0]
     except Exception as e:
-        print(f"Ошибка подкрановой балки: {e}")
+        print(f"Ошибка чтения подкрановой балки: {e}")
     return None
 
 
-def get_brake_kgm(q_crane_t: float, span_pb_m: float, n_cranes: int,
-                  with_passage: bool, is_edge: bool):
-    """Металлоёмкость тормозных конструкций (кг/м) из встроенной таблицы."""
+def get_brake_kgm(
+    q_crane_t: float,
+    span_pb_m: float,
+    n_cranes: int,
+    with_passage: bool,   # True = С проходом, False = Без прохода
+    is_edge: bool,        # True = крайний ряд
+) -> float:
+    """
+    Металлоемкость тормозных конструкций (кг/м) из таблицы docx.
+    """
     try:
-        table = BRAKE_T1 if q_crane_t <= 50 else BRAKE_T2
-        spans = sorted({k[0] for k in table})
-        span_key = ceil_to_table(span_pb_m, spans)
-        vals = table.get((span_key, is_edge, with_passage))
-        if vals is None:
-            # Fallback — ближайший ключ
-            for k, v in table.items():
-                if k[0] == span_key:
-                    vals = v
-                    break
-        if vals:
-            idx = 0 if n_cranes == 1 else min(1, len(vals) - 1)
-            return vals[idx]
+        table_idx = 0 if q_crane_t <= 50 else 1
+        rows = _parse_docx_table_simple(BRAKE_DOCX, table_idx)
+
+        span_str = f"{int(span_pb_m)} м"
+        row_type  = "Крайний" if is_edge else "Средний"
+        pass_type = "С проходом" if with_passage else "Без прохода"
+
+        for row in rows:
+            row_full = " ".join(row)
+            if (span_str in row[0] if row else False) \
+               and row_type in row_full and pass_type in row_full:
+                vals = []
+                for c in row:
+                    try:
+                        v = float(c)
+                        vals.append(v)
+                    except (ValueError, TypeError):
+                        pass
+                if vals:
+                    idx = 0 if n_cranes == 1 else min(1, len(vals) - 1)
+                    return vals[idx]
     except Exception as e:
-        print(f"Ошибка тормозных конструкций: {e}")
+        print(f"Ошибка чтения тормозных конструкций: {e}")
     return None
 
 
-def get_fakhverk_kgm2(step_col_m: float, has_fakhverk_post: bool,
-                      h_building: float, rig_load: float):
-    """Расход стали на фахверк (кг/м² стен) из встроенной таблицы."""
+def get_fakhverk_kgm2(
+    df_fakh: pd.DataFrame,
+    step_col_m: float,      # шаг колонн
+    has_fakhverk_post: bool, # наличие стойки фахверка
+    h_building: float,       # высота здания, м
+    rig_load: float,         # нагрузка на ригели фахверка, кг/м.п.
+) -> float:
+    """
+    Расход стали на фахверк (кг/м2 площади стен) из таблицы.
+    """
     try:
+        # Определить тип схемы
         if step_col_m <= 6 and has_fakhverk_post:
-            ftype = 'III'
+            type_row = 7   # Row 7 = III тип: шаг 6м со стойками фахверка
         elif step_col_m <= 6:
-            ftype = 'I'
+            type_row = 5   # Row 5 = I тип: шаг 6м
         else:
-            ftype = 'II'
+            type_row = 6   # Row 6 = II тип: шаг 12м
 
+        # Определить столбец нагрузки
         if rig_load <= 0:
-            load_cat = 0
+            load_col_start = 2   # Без нагрузки
         elif rig_load <= 100:
-            load_cat = 1
+            load_col_start = 5   # 100 кг/м.п.
         else:
-            load_cat = 2
+            load_col_start = 8   # 300 кг/м.п.
 
+        # Определить высоту (столбец): до 10, до 20, до 40
         if h_building <= 10:
-            h_cat = 0
+            h_offset = 0
         elif h_building <= 20:
-            h_cat = 1
+            h_offset = 1
         else:
-            h_cat = 2
+            h_offset = 2
 
-        return FAKHVERK_DATA.get((ftype, load_cat, h_cat))
+        col = load_col_start + h_offset
+        row = df_fakh.iloc[type_row]
+        val = float(row.iloc[col])
+        return val
     except Exception as e:
-        print(f"Ошибка фахверк: {e}")
+        print(f"Ошибка чтения фахверк: {e}")
         return None
 
 
-def get_pipe_support_kgm2(building_type: str):
-    """Расход стали на опоры трубопроводов (кг/м²) из встроенной таблицы."""
-    type_map = {
-        "Основные производственные":  (11, 22),
-        "Здания энергоносителей":      (23, 40),
-        "Вспомогательные здания":      (2,  4),
-    }
-    rng = type_map.get(building_type, (11, 22))
-    return (rng[0] + rng[1]) / 2
+def get_pipe_support_kgm2(df_fakh: pd.DataFrame, building_type: str) -> float:
+    """
+    Расход стали на опоры трубопроводов (кг/м2 площади здания) из таблицы.
+    """
+    try:
+        # Row 13: Основные 11-22, Энергоносители 23-40, Вспомогательные 2-4
+        type_map = {
+            "Основные производственные": (11, 22),
+            "Здания энергоносителей":    (23, 40),
+            "Вспомогательные здания":    (2, 4),
+        }
+        rng = type_map.get(building_type, (11, 22))
+        return (rng[0] + rng[1]) / 2  # среднее, т.к. таблица даёт диапазон
+    except Exception:
+        return None
 
 
 # ─────────────────────────────────────────────────────────
@@ -385,46 +478,71 @@ def get_pipe_support_kgm2(building_type: str):
 # ─────────────────────────────────────────────────────────
 
 def calculate(params: dict) -> dict:
+    """
+    Выполнить расчёт металлоемкости.
+    params — словарь входных параметров.
+    Возвращает словарь результатов.
+    """
     res = {}
     log = []
 
     # ── Входные параметры ──────────────────────────────────
-    L_build    = params["L_build"]
-    W_build    = params["W_build"]
-    L_span     = params["L_span"]
-    B_step     = params["B_step"]
-    col_step   = params["col_step"]
-    h_rail     = params["h_rail"]
-    Q_snow     = params["Q_snow"]
-    Q_dust     = params["Q_dust"]
-    Q_roof     = params["Q_roof"]
-    Q_purlin   = params["Q_purlin"]
-    yc         = params["yc"]
-    truss_type = params["truss_type"]
-    q_crane_t  = params["q_crane_t"]
-    n_cranes   = params["n_cranes"]
-    with_pass  = params["with_pass"]
-    rig_load   = params["rig_load"]
-    has_post   = params["has_post"]
-    bld_type   = params["bld_type"]
+    L_build   = params["L_build"]    # длина здания по осям, м
+    W_build   = params["W_build"]    # ширина здания, м
+    L_span    = params["L_span"]     # пролёт фермы, м
+    B_step    = params["B_step"]     # шаг ферм, м (пролёт прогона)
+    col_step  = params["col_step"]   # шаг колонн, м (6 или 12)
+    h_rail    = params["h_rail"]     # уровень головки рельса, м
+    Q_snow    = params["Q_snow"]     # снеговая нагрузка, кН/м2
+    Q_dust    = params["Q_dust"]     # пыль, кН/м2
+    Q_roof    = params["Q_roof"]     # кровля, кН/м2
+    Q_purlin  = params["Q_purlin"]   # вес прогона, кН/м2
+    yc        = params["yc"]         # коэф. уровня ответственности
+    truss_type = params["truss_type"]  # "Уголки"/"Двутавры"/"Молодечно"
+    q_crane_t = params["q_crane_t"]  # г/п крана, т
+    n_cranes  = params["n_cranes"]   # кол-во кранов (1 или 2)
+    with_pass = params["with_pass"]  # тормозные пути: True=с проходом
+    rig_load  = params["rig_load"]   # нагрузка на ригели фахверка, кг/м.п.
+    has_post  = params["has_post"]   # стойка фахверка (bool)
+    bld_type  = params["bld_type"]   # тип здания для опор трубопроводов
+
+    # Проверить наличие файлов
+    missing = []
+    for path in [POKRYTIE_XLSX, FAKHVERK_XLSX, CRANE_BEAMS_DOCX, BRAKE_DOCX]:
+        if not os.path.exists(path):
+            missing.append(os.path.basename(path))
+    if missing:
+        raise FileNotFoundError(
+            "Не найдены файлы с таблицами:\n" + "\n".join(missing)
+        )
+
+    # Загрузить таблицы
+    df_cov  = read_pokrytie()
+    df_fakh = read_fakhverk()
 
     # ── Геометрия ─────────────────────────────────────────
-    S_floor  = L_build * W_build
-    P_walls  = 2 * (L_build + W_build)
-    H_lower  = h_rail
+    H_lower  = h_rail          # высота подкрановой части, м
 
+    # Площадь здания
+    S_floor = L_build * W_build
+    # Периметр стен (предварительно для прогонов; H_full уточняется в разделе колонн)
+    P_walls = 2 * (L_build + W_build)
+    # Предварительная высота для стен (уточняется после расчёта колонн)
     H_full_est = h_rail + 1.5
     S_walls_est = P_walls * H_full_est
 
     log.append(f"Площадь пола: {S_floor:.1f} м²")
 
     # ── 1. ПРОГОНЫ (Метод 1) ──────────────────────────────
-    step_purlin = 3.0
-    q_pr_knm  = (Q_roof + Q_purlin + Q_snow + Q_dust) * step_purlin * yc
-    q_pr_tm   = q_pr_knm / 9.81
+    step_purlin = 3.0  # шаг прогонов, м (принято)
+    # Расчётная нагрузка на 1 прогон (кН/м)
+    q_pr_knm = (Q_roof + Q_purlin + Q_snow + Q_dust) * step_purlin * yc
+    q_pr_tm  = q_pr_knm / 9.81  # т/м
 
     mass_purlin, purlin_name = select_purlin(q_pr_tm, B_step)
+    # Количество прогонов в 1 шаге ферм
     n_pr = L_span / step_purlin + 3
+    # Расход на 1 м2 покрытия
     g_purlin_kgm2 = mass_purlin * n_pr / (L_span * B_step)
     G_purlin_total = g_purlin_kgm2 * S_floor
 
@@ -441,33 +559,44 @@ def calculate(params: dict) -> dict:
                f"g={g_purlin_kgm2:.2f} кг/м²")
 
     # ── 2. СТРОПИЛЬНЫЕ ФЕРМЫ ─────────────────────────────
-    g_links_est = 0.05
-    gn_total    = Q_snow + Q_dust + Q_roof + Q_purlin + g_links_est
-    Q_total_knm = gn_total * B_step * yc
+    # Суммарная нормативная нагрузка gn (кН/м2)
+    # Вес связей принимается 0.05 кН/м2 предварительно
+    g_links_est = 0.05  # кН/м2 (связи, предварительно)
+    gn_total = Q_snow + Q_dust + Q_roof + Q_purlin + g_links_est
+
+    # Нагрузка на 1 м.п. фермы (т/м)
+    Q_total_knm = (gn_total) * B_step * yc
     Q_total_tm  = Q_total_knm / 9.81
 
     g_truss_m1 = None
     g_truss_m2 = None
 
+    # Метод 1 — только для уголков
     if truss_type == "Уголки":
-        alpha_f = 1.4
+        alpha_f = 1.4  # С235-С285
         gamma_n = yc
+        # Gф,n (кН) = (gn*bф/1000 + 0.018)*αф*L²/0.85 * γn
+        # gn — в кН/м2, bф в м → результат в кН
         G_truss_m1_kn = (gn_total * B_step / 1000 + 0.018) * alpha_f * L_span**2 / 0.85 * gamma_n
-        G_truss_m1_t  = G_truss_m1_kn / 9.81
+        G_truss_m1_t = G_truss_m1_kn / 9.81  # кН → тонны
         n_trusses = (L_build / B_step + 1)
-        g_truss_m1 = G_truss_m1_t * 1000 * n_trusses / S_floor
+        g_truss_m1 = G_truss_m1_t * 1000 * n_trusses / S_floor  # кг/м2
         log.append(f"Ферма М1: Gф={G_truss_m1_t*1000:.0f} кг, "
                    f"g={g_truss_m1:.2f} кг/м²")
 
-    mass_truss_t, truss_label = get_truss_mass_m2(truss_type, L_span, Q_total_tm)
+    # Метод 2 — из таблицы
+    mass_truss_t, truss_label = get_truss_mass_m2(
+        df_cov, truss_type, L_span, Q_total_tm
+    )
     if mass_truss_t is not None:
-        n_trusses  = (L_build / B_step + 1)
-        g_truss_m2 = mass_truss_t * 1000 * n_trusses / S_floor
+        n_trusses = (L_build / B_step + 1)
+        g_truss_m2 = mass_truss_t * 1000 * n_trusses / S_floor  # кг/м2
         log.append(f"Ферма М2: 1 ферма={mass_truss_t*1000:.0f} кг "
                    f"(нагрузка {Q_total_tm:.2f} т/м), g={g_truss_m2:.2f} кг/м²")
     else:
         log.append(f"Ферма М2: {truss_label}")
 
+    # Вес фермы для дальнейших расчётов (используем М2 если есть, иначе М1)
     G_truss_1_kg = (mass_truss_t * 1000) if mass_truss_t else (
         G_truss_m1_t * 1000 if truss_type == "Уголки" else None
     )
@@ -498,21 +627,24 @@ def calculate(params: dict) -> dict:
     g_sub_m2 = None
 
     if col_step == 12 and B_step < col_step:
-        R_kn = Q_total_knm * L_span / 2
+        # Реакция стропильной фермы (М1): R = Qобщ * L / 2
+        R_kn = Q_total_knm * L_span / 2  # кН
         R_t  = R_kn / 9.81
 
+        # Метод 1
         R_for_alpha = max(100, min(R_kn, 400))
-        alpha_pf    = (R_for_alpha - 100) * 0.0002 + 0.044
-        Lpf         = 12.0
-        G_sub_m1_t  = alpha_pf * Lpf**2
+        alpha_pf = (R_for_alpha - 100) * 0.0002 + 0.044
+        Lpf = 12.0  # м (пролёт п/ф = шаг колонн)
+        G_sub_m1_t = alpha_pf * Lpf**2  # т
         n_sub = (L_build / col_step) * (W_build / L_span - 1) if W_build > L_span else 0
         if n_sub <= 0:
             n_sub = L_build / col_step
-        g_sub_m1 = G_sub_m1_t * 1000 * n_sub / S_floor
+        g_sub_m1 = G_sub_m1_t * 1000 * n_sub / S_floor  # кг/м2
 
-        mass_sub_t = get_subtruss_mass_m2(R_t)
+        # Метод 2
+        mass_sub_t = get_subtruss_mass_m2(df_cov, R_t)
         if mass_sub_t is not None:
-            g_sub_m2 = mass_sub_t * 1000 * n_sub / S_floor
+            g_sub_m2 = mass_sub_t * 1000 * n_sub / S_floor  # кг/м2
 
         log.append(f"Подстроп. фермы: R={R_kn:.0f} кН ({R_t:.1f} т), "
                    f"αпф={alpha_pf:.4f}, Gпф={G_sub_m1_t*1000:.0f} кг (М1)")
@@ -530,38 +662,53 @@ def calculate(params: dict) -> dict:
         res["подстропильные_фермы"] = {"примечание": "Не требуются (шаг колонн = шагу ферм)"}
 
     # ── 5. ПОДКРАНОВЫЕ БАЛКИ ─────────────────────────────
+    # Метод 1
     alpha_pb = closest_alpha_pb(q_crane_t)
     qr       = rail_weight(q_crane_t)
     k_pb     = 1.4
-    L_pb     = float(col_step)
+    L_pb     = float(col_step)  # пролёт п/б = шаг колонн
 
-    G_pb_kn     = (alpha_pb * L_pb + qr) * L_pb * k_pb
-    alpha_pb_t  = alpha_pb / 9.81
-    G_pb_t      = (alpha_pb_t * L_pb + qr / 9.81) * L_pb * k_pb
+    # G п/б (нормативная масса балки + рельс + тормоза) в кН
+    G_pb_kn  = (alpha_pb * L_pb + qr) * L_pb * k_pb
+    G_pb_kg  = G_pb_kn / 9.81 * 1000  # неверная формула в методике — G уже в кН*?
 
+    # Методика: Gпб,n = (αпб * Lпб + qр) * Lпб * kпб — результат в кН (т.к. α в кН/м²)
+    # Переводим в кг:
+    G_pb_kg  = G_pb_kn * 100  # α в кН/м/м, Lпб в м → кН/м → * Lпб → кН → *100≈кг
+    # Аппроксимируем: (α_кН/м * L + qр_кН/м) * L * kпб = кН — это уже масса?
+    # Используем более практичный подход:
+    # Gпб = (α * L + q_rail) * L * k (т) — α в т/м/м
+    alpha_pb_t = alpha_pb / 9.81  # перевод: если α был в кН/м/м → т/м/м
+    G_pb_t = (alpha_pb_t * L_pb + qr / 9.81) * L_pb * k_pb
+
+    # Расход на 1 м2 здания (с учётом крайних + средних рядов)
     n_bays_along = math.ceil(L_build / col_step)
-    n_rows_edge  = 2
-    n_rows_mid   = max(0, round(W_build / L_span) - 1)
-    n_pb_total   = (n_rows_edge + n_rows_mid * 2) * n_bays_along
+    # Крайние ряды — по 2 ряда (А и В), средние — при многопролётности
+    n_rows_edge = 2
+    n_rows_mid  = max(0, round(W_build / L_span) - 1)
+    n_pb_total  = (n_rows_edge + n_rows_mid * 2) * n_bays_along
 
     G_pb_total_m1_t = G_pb_t * n_pb_total
-    g_pb_m1         = G_pb_total_m1_t * 1000 / S_floor
+    g_pb_m1 = G_pb_total_m1_t * 1000 / S_floor  # кг/м2
 
+    # Метод 2 — из таблицы
+    # Крайний ряд
     pb_edge_kgm = get_crane_beam_kgm_m2(q_crane_t, L_pb, n_cranes)
     br_edge_kgm = get_brake_kgm(q_crane_t, L_pb, n_cranes, with_pass, is_edge=True)
+    # Средний ряд
     pb_mid_kgm  = get_crane_beam_kgm_m2(q_crane_t, L_pb, n_cranes)
     br_mid_kgm  = get_brake_kgm(q_crane_t, L_pb, n_cranes, with_pass, is_edge=False)
 
     if pb_edge_kgm and br_edge_kgm is not None:
-        total_edge_kgm  = pb_edge_kgm + (br_edge_kgm or 0)
-        total_mid_kgm   = (pb_mid_kgm or 0) + (br_mid_kgm or 0)
-        G_pb_edge_t     = total_edge_kgm * L_pb * n_bays_along * n_rows_edge / 1000
-        G_pb_mid_t      = total_mid_kgm  * L_pb * n_bays_along * n_rows_mid  / 1000
+        total_edge_kgm = pb_edge_kgm + (br_edge_kgm or 0)
+        total_mid_kgm  = (pb_mid_kgm or 0) + (br_mid_kgm or 0)
+        G_pb_edge_t = total_edge_kgm * L_pb * n_bays_along * n_rows_edge / 1000
+        G_pb_mid_t  = total_mid_kgm  * L_pb * n_bays_along * n_rows_mid  / 1000
         G_pb_total_m2_t = G_pb_edge_t + G_pb_mid_t
-        g_pb_m2         = G_pb_total_m2_t * 1000 / S_floor
+        g_pb_m2 = G_pb_total_m2_t * 1000 / S_floor
     else:
         G_pb_total_m2_t = None
-        g_pb_m2         = None
+        g_pb_m2 = None
 
     log.append(f"Подкрановые балки М1: α={alpha_pb}, G={G_pb_t:.2f} т, "
                f"g={g_pb_m1:.2f} кг/м²")
@@ -582,49 +729,61 @@ def calculate(params: dict) -> dict:
     }
 
     # ── 6. КОЛОННЫ (Метод 1) ──────────────────────────────
-    rho       = 78.5
-    Ry        = 24.0
-    psi_upper = 1.4
-    psi_lower = 2.1
-    kM_upper  = 0.275
-    kM_lower  = 0.45
+    # Параметры колонны
+    rho   = 78.5   # кН/м³
+    Ry    = 24.0   # кН/см²  → 24000 кН/м²
+    psi_upper = 1.4   # ψк для сплошной надкрановой части
+    psi_lower = 2.1   # ψк для сквозной подкрановой части
+    kM_upper  = 0.275 # кМ для надкрановой части
+    kM_lower  = 0.45  # кМ для подкрановой части
 
+    # Высоты частей колонны
+    # H_upper — надкрановая: от верха подкрановой балки до низа фермы
     hb_ratio = BEAM_HEIGHT_RATIO.get(
         min(BEAM_HEIGHT_RATIO.keys(), key=lambda k: abs(k - q_crane_t)),
         (1/7, 1/9)
     )
-    h_pb     = col_step * (hb_ratio[0] if col_step <= 6 else hb_ratio[1])
-    h_rail_h = 0.12
-    H_upper  = max(1.5, h_pb + h_rail_h + 0.3)
-    H_lower  = h_rail
+    h_pb = col_step * (hb_ratio[0] if col_step <= 6 else hb_ratio[1])
+    h_rail_h = 0.12  # высота рельса, м (КР-70 типично)
+    H_upper = max(1.5, h_pb + h_rail_h + 0.3)  # мин 1.5м
+    H_lower = h_rail  # высота подкрановой части = уровень головки рельса
 
     H_full  = H_upper + H_lower
     S_walls = P_walls * H_full
 
-    log.append(f"Высота здания (ориент.): {H_full:.1f} м "
-               f"(надкр.={H_upper:.1f}, подкр.={H_lower:.1f})")
+    log.append(f"Высота здания (ориент.): {H_full:.1f} м (надкр.={H_upper:.1f}, подкр.={H_lower:.1f})")
     log.append(f"Площадь стен: {S_walls:.1f} м²")
 
-    gst         = 0.25
-    alpha_win   = 0.15
+    # Стеновая нагрузка на колонну (сэндвич-панель gст ≈ 0.25 кН/м²)
+    gst = 0.25  # кН/м2 стены
+    alpha_win = 0.15  # коэф. проёмов
     G_wall_upper_kn = gst * H_upper * (1 - alpha_win) * col_step
     G_wall_lower_kn = gst * H_lower * (1 - alpha_win) * col_step
 
+    # ΣFв (кН) — нагрузка в верхней части колонны (крайний ряд А)
     ΣFv_kn = (Q_roof + Q_purlin + Q_snow + Q_dust) * col_step * L_span / 2 + G_wall_upper_kn
+
+    # Масса надкрановой части (кН — вес)
     G_col_upper_kn = ΣFv_kn * rho * psi_upper * H_upper / (kM_upper * 24000)
 
-    k1       = 1.1
-    q_eq     = q_equiv(q_crane_t)
+    # Вертикальное давление крана: Dmax = q * B * k1 * γc (k2=1, разрезные балки)
+    k1   = 1.1
+    q_eq = q_equiv(q_crane_t)
     D_max_kn = q_eq * col_step * k1 * yc
 
+    # ΣFн (кН) — нагрузка в нижней части колонны
+    # G_pb_kn — уже в кН (сила веса балки), добавляем напрямую
     ΣFn_kn = ΣFv_kn + D_max_kn + G_pb_kn + G_wall_lower_kn + G_col_upper_kn
+
+    # Масса подкрановой части (кН — вес)
     G_col_lower_kn = ΣFn_kn * rho * psi_lower * H_lower / (kM_lower * 24000)
 
     G_col_total_kn = G_col_upper_kn + G_col_lower_kn
     G_col_total_kg = G_col_total_kn / 9.81 * 1000
 
+    # Число колонн
     n_col_along = round(L_build / col_step) + 1
-    n_rows      = round(W_build / L_span) + 1
+    n_rows = round(W_build / L_span) + 1
     n_col_total = n_col_along * n_rows
 
     G_col_all_t = G_col_total_kg * n_col_total / 1000
@@ -647,7 +806,7 @@ def calculate(params: dict) -> dict:
     }
 
     # ── 7. ФАХВЕРК (Метод 2) ─────────────────────────────
-    g_fakh = get_fakhverk_kgm2(col_step, has_post, H_full, rig_load)
+    g_fakh = get_fakhverk_kgm2(df_fakh, col_step, has_post, H_full, rig_load)
     if g_fakh is not None:
         G_fakh_total_t = g_fakh * S_walls / 1000
         res["фахверк"] = {
@@ -661,13 +820,14 @@ def calculate(params: dict) -> dict:
         res["фахверк"] = {"ошибка": "Не удалось определить"}
 
     # ── 8. ОГРАЖДАЮЩИЕ КОНСТРУКЦИИ ────────────────────────
+    # Стены (периметр × высота)
     res["ограждение"] = {
         "стены_м2": round(S_walls, 1),
         "кровля_м2": round(S_floor, 1),
     }
 
     # ── 9. ОПОРЫ ТРУБОПРОВОДОВ (Метод 2) ──────────────────
-    g_pipes = get_pipe_support_kgm2(bld_type)
+    g_pipes = get_pipe_support_kgm2(df_fakh, bld_type)
     if g_pipes is not None:
         G_pipes_t = g_pipes * S_floor / 1000
         res["опоры_трубопроводов"] = {
@@ -694,11 +854,11 @@ def calculate(params: dict) -> dict:
         + safe_float(res["колонны"], "масса_общая_т")
     )
     total_m2 = (
-        safe_float(res["прогоны"], "масса_общая_т")
+        safe_float(res["прогоны"], "масса_общая_т")  # прогоны только М1
         + safe_float(res["фермы"], "масса_общая_т_М2")
         + safe_float(res.get("подстропильные_фермы", {}), "масса_общая_т_М2")
         + safe_float(res["подкрановые_балки"], "масса_общая_т_М2")
-        + safe_float(res["колонны"], "масса_общая_т")
+        + safe_float(res["колонны"], "масса_общая_т")  # колонны только М1
         + safe_float(res["связи_покрытия"], "масса_общая_т")
         + safe_float(res.get("фахверк", {}), "масса_общая_т")
         + safe_float(res.get("опоры_трубопроводов", {}), "масса_общая_т")
@@ -730,6 +890,8 @@ PAD = {"padx": 8, "pady": 4}
 
 
 class FloatEntry(ctk.CTkEntry):
+    """Поле ввода числа с плавающей запятой."""
+
     def get_float(self, default=0.0):
         try:
             return float(self.get().replace(",", "."))
@@ -740,16 +902,20 @@ class FloatEntry(ctk.CTkEntry):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Металлоёмкость производственных зданий — v1.0")
+        self.title("Металлоемкость производственных зданий — v1.0")
         self.geometry("1400x900")
         self.resizable(True, True)
+
         self._build_ui()
+
+    # ── Построение интерфейса ─────────────────────────────
 
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=2)
         self.grid_rowconfigure(0, weight=1)
 
+        # ── Левая панель: ввод ────────────────────────────
         left = ctk.CTkScrollableFrame(self, label_text="Входные параметры",
                                        width=500)
         left.grid(row=0, column=0, sticky="nsew", padx=(10, 5), pady=10)
@@ -763,7 +929,7 @@ class App(ctk.CTk):
                 row=r, column=0, columnspan=2, sticky="w", **PAD)
             r += 1
 
-        def row_entry(label, default=""):
+        def row_entry(label, default="", tooltip=""):
             nonlocal r
             ctk.CTkLabel(left, text=label, font=FONT_LABEL).grid(
                 row=r, column=0, sticky="w", **PAD)
@@ -791,14 +957,16 @@ class App(ctk.CTk):
             r += 1
             return var
 
+        # ── Геометрия ─────────────────────────────────────
         section("Геометрия здания")
-        self.e_L_build  = row_entry("Длина здания по осям, м", 120)
-        self.e_W_build  = row_entry("Ширина здания, м", 48)
-        self.e_L_span   = row_entry("Пролёт фермы L, м", 24)
-        self.e_B_step   = row_entry("Шаг ферм B, м", 6)
+        self.e_L_build = row_entry("Длина здания по осям, м", 120)
+        self.e_W_build = row_entry("Ширина здания, м", 48)
+        self.e_L_span  = row_entry("Пролёт фермы L, м", 24)
+        self.e_B_step  = row_entry("Шаг ферм B, м", 6)
         self.v_col_step = row_combo("Шаг колонн, м", ["6", "12"], "12")
         self.e_h_rail   = row_entry("Уровень головки рельса, м", 8.0)
 
+        # ── Нагрузки ──────────────────────────────────────
         section("Нагрузки (расчётные, кН/м²)")
         self.e_Q_snow   = row_entry("Снег (Qснег), кН/м²", 2.1)
         self.e_Q_dust   = row_entry("Пыль (Qпыль), кН/м²", 0.0)
@@ -806,26 +974,30 @@ class App(ctk.CTk):
         self.e_Q_purlin = row_entry("Вес прогона (Qвес.прог.), кН/м²", 0.35)
         self.e_yc       = row_entry("Коэф. уровня ответственности γc", 1.0)
 
+        # ── Тип фермы ─────────────────────────────────────
         section("Стропильные фермы")
         self.v_truss = row_combo("Тип фермы", ["Уголки", "Двутавры", "Молодечно"])
 
+        # ── Кран ──────────────────────────────────────────
         section("Мостовой кран")
         self.e_crane_cap = row_entry("Грузоподъёмность крана, т", 50)
         self.v_n_cranes  = row_combo("Кол-во кранов в пролёте", ["1", "2"], "1")
         self.v_with_pass = row_combo("Тормозные пути",
                                      ["С проходом", "Без прохода"])
 
+        # ── Фахверк ───────────────────────────────────────
         section("Фахверк")
         self.e_rig_load = row_entry("Нагрузка на ригели фахверка, кг/м.п.", 0)
         self.v_has_post = row_check("Наличие стойки фахверка (только при шаге 12 м)")
 
+        # ── Тип здания ────────────────────────────────────
         section("Тип здания (для опор трубопроводов)")
         self.v_bld_type = row_combo(
             "Тип здания",
-            ["Основные производственные", "Здания энергоносителей",
-             "Вспомогательные здания"]
+            ["Основные производственные", "Здания энергоносителей", "Вспомогательные здания"]
         )
 
+        # ── Кнопки ────────────────────────────────────────
         r += 1
         btn_frame = ctk.CTkFrame(left, fg_color="transparent")
         btn_frame.grid(row=r, column=0, columnspan=2, pady=10)
@@ -842,27 +1014,32 @@ class App(ctk.CTk):
             width=100, height=44
         ).pack(side="left", padx=5)
 
+        # Подсветка стойки фахверка (только при шаге 12м)
         def _toggle_post(*_):
+            step = self.v_col_step.get()
             self.v_has_post.set(False)
         self.v_col_step.trace_add("write", _toggle_post)
 
+        # ── Правая панель: результаты ─────────────────────
         right = ctk.CTkFrame(self)
         right.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=10)
         right.grid_rowconfigure(1, weight=1)
         right.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(right, text="Результаты расчёта",
-                     font=FONT_TITLE).grid(row=0, column=0, sticky="w",
-                                           padx=10, pady=(10, 0))
+                     font=FONT_TITLE).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 0))
 
         self.txt_result = ctk.CTkTextbox(right, font=FONT_RESULT,
                                           wrap="word", state="disabled")
         self.txt_result.grid(row=1, column=0, sticky="nsew", padx=10, pady=(5, 10))
 
+        # Строка статуса
         self.lbl_status = ctk.CTkLabel(self, text="", font=FONT_LABEL,
                                         text_color="#80cbc4")
         self.lbl_status.grid(row=1, column=0, columnspan=2,
                               sticky="w", padx=20, pady=(0, 8))
+
+    # ── Чтение параметров из UI ──────────────────────────
 
     def _read_params(self) -> dict:
         col_step = int(self.v_col_step.get())
@@ -888,6 +1065,8 @@ class App(ctk.CTk):
             "bld_type":   self.v_bld_type.get(),
         }
 
+    # ── Кнопка: Рассчитать ───────────────────────────────
+
     def _on_calculate(self):
         self.lbl_status.configure(text="Выполняется расчёт…", text_color="#ffcc80")
         self.update()
@@ -898,6 +1077,9 @@ class App(ctk.CTk):
             self.lbl_status.configure(
                 text="Расчёт завершён успешно.", text_color="#80cbc4"
             )
+        except FileNotFoundError as e:
+            messagebox.showerror("Файлы не найдены", str(e))
+            self.lbl_status.configure(text="Ошибка: файлы не найдены.", text_color="#ef9a9a")
         except Exception:
             tb = traceback.format_exc()
             messagebox.showerror("Ошибка расчёта", tb)
@@ -907,6 +1089,8 @@ class App(ctk.CTk):
         self._set_result("")
         self.lbl_status.configure(text="")
 
+    # ── Форматирование и отображение результатов ─────────
+
     def _set_result(self, text: str):
         self.txt_result.configure(state="normal")
         self.txt_result.delete("1.0", "end")
@@ -915,7 +1099,7 @@ class App(ctk.CTk):
 
     def _show_results(self, params: dict, res: dict):
         lines = []
-        sep   = "─" * 68
+        sep  = "─" * 68
 
         def h(text):
             lines.append(f"\n{sep}")
@@ -930,6 +1114,7 @@ class App(ctk.CTk):
         def row2(label, m1, m2):
             lines.append(f"  {label:<42}  М1: {m1:<12}  М2: {m2}")
 
+        # ── Заголовок ─────────────────────────────────────
         lines.append("=" * 68)
         lines.append("  РАСЧЁТ МЕТАЛЛОЁМКОСТИ ПРОИЗВОДСТВЕННОГО ЗДАНИЯ")
         lines.append(f"  Шаг колонн: {params['col_step']} м  |  "
@@ -940,12 +1125,14 @@ class App(ctk.CTk):
                      f"{'С проходом' if params['with_pass'] else 'Без прохода'}")
         lines.append("=" * 68)
 
+        # ── Геометрия ─────────────────────────────────────
         h("ГЕОМЕТРИЯ")
         row("Длина здания, м:", params["L_build"])
         row("Ширина здания, м:", params["W_build"])
         row("Площадь пола, м²:", params["L_build"] * params["W_build"])
         row("Высота здания (ориент.), м:", f"~{round(params['h_rail'] + 1.5, 1)} (уточн. в логе)")
 
+        # ── Прогоны ───────────────────────────────────────
         h("1. ПРОГОНЫ  [Метод 1]")
         pr = res["прогоны"]
         row("Расчётная нагрузка, т/м:", pr["нагрузка_тм"])
@@ -955,17 +1142,20 @@ class App(ctk.CTk):
         row("Расход, кг/м²:", pr["расход_кгм2"])
         row("Масса ИТОГО, т:", pr["масса_общая_т"])
 
+        # ── Фермы ─────────────────────────────────────────
         h("2. СТРОПИЛЬНЫЕ ФЕРМЫ  [М1 + М2]")
         fm = res["фермы"]
         row("Нагрузка на ферму, т/м:", fm["нагрузка_тм"])
         row2("Расход, кг/м²:", fm["М1_расход_кгм2"], fm["М2_расход_кгм2"])
         row2("Масса ИТОГО, т:", fm["масса_общая_т_М1"], fm["масса_общая_т_М2"])
 
+        # ── Связи ─────────────────────────────────────────
         h("3. СВЯЗИ ПОКРЫТИЯ  [Метод 2]")
         sv = res["связи_покрытия"]
         row("Расход, кг/м²:", sv["расход_кгм2"])
         row("Масса ИТОГО, т:", sv["масса_общая_т"])
 
+        # ── Подстропильные ────────────────────────────────
         h("4. ПОДСТРОПИЛЬНЫЕ ФЕРМЫ  [М1 + М2]")
         psf = res.get("подстропильные_фермы", {})
         if "примечание" in psf:
@@ -977,6 +1167,7 @@ class App(ctk.CTk):
             row2("Расход, кг/м²:", psf["М1_расход_кгм2"], psf["М2_расход_кгм2"])
             row2("Масса ИТОГО, т:", psf["масса_общая_т_М1"], psf["масса_общая_т_М2"])
 
+        # ── Подкрановые балки ─────────────────────────────
         h("5. ПОДКРАНОВЫЕ БАЛКИ  [М1 + М2]")
         pb = res["подкрановые_балки"]
         row("Коэф. αпб:", pb["alpha_pb"])
@@ -990,6 +1181,7 @@ class App(ctk.CTk):
         row2("Расход, кг/м²:", pb["М1_расход_кгм2"], pb["М2_расход_кгм2"])
         row2("Масса ИТОГО, т:", pb["масса_общая_т_М1"], pb["масса_общая_т_М2"])
 
+        # ── Колонны ───────────────────────────────────────
         h("6. КОЛОННЫ  [Метод 1]")
         kl = res["колонны"]
         row("Количество колонн:", kl["n_колонн"])
@@ -1001,6 +1193,7 @@ class App(ctk.CTk):
         row("Расход, кг/м²:", kl["расход_кгм2"])
         row("Масса ИТОГО, т:", kl["масса_общая_т"])
 
+        # ── Фахверк ───────────────────────────────────────
         h("7. ФАХВЕРК  [Метод 2]")
         fh = res.get("фахверк", {})
         if "ошибка" in fh:
@@ -1010,11 +1203,13 @@ class App(ctk.CTk):
             row("Площадь стен, м²:", fh.get("площадь_стен_м2", "н/п"))
             row("Масса ИТОГО, т:", fh.get("масса_общая_т", "н/п"))
 
+        # ── Ограждение ────────────────────────────────────
         h("8. ОГРАЖДАЮЩИЕ КОНСТРУКЦИИ (справочно)")
         og = res["ограждение"]
         row("Площадь стен (периметр × высота), м²:", og["стены_м2"])
         row("Площадь кровли (длина × ширина), м²:",  og["кровля_м2"])
 
+        # ── Опоры трубопроводов ───────────────────────────
         h("9. ОПОРЫ ТРУБОПРОВОДОВ  [Метод 2]")
         op = res.get("опоры_трубопроводов", {})
         if "примечание" in op:
@@ -1023,6 +1218,7 @@ class App(ctk.CTk):
             row("Расход, кг/м²:", op.get("расход_кгм2", "н/п"))
             row("Масса ИТОГО, т:", op.get("масса_общая_т", "н/п"))
 
+        # ── Итог ──────────────────────────────────────────
         lines.append("\n" + "=" * 68)
         lines.append("  ИТОГО ПО КАРКАСУ")
         lines.append("=" * 68)
@@ -1033,6 +1229,7 @@ class App(ctk.CTk):
                      f"({it['каркас_М2_кгм2']} кг/м²)")
         lines.append("=" * 68)
 
+        # ── Лог ───────────────────────────────────────────
         if res.get("_log"):
             lines.append("\n─── Внутренний лог ──────────────────────────────────────────────")
             for entry in res["_log"]:
