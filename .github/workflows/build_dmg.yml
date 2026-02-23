@@ -1,4 +1,4 @@
-name: Build macOS DMG
+name: Build macOS DMG (MetalCalc Suite)
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     steps:
     # ── 1. Получить код ───────────────────────────────────
@@ -27,42 +27,29 @@ jobs:
         pip install --upgrade pip
         pip install customtkinter pyinstaller
 
-    # ── 4. Сборка трёх .app ───────────────────────────────
-    - name: Build MetalCalc.app (производственные здания)
-      run: pyinstaller metal_macos.spec
-
-    - name: Build EstakadaPipe.app (трубопроводные эстакады 3.2F)
-      run: pyinstaller estakada_pipe.spec
-
-    - name: Build EstakadaElec.app (кабельные эстакады 4.2F)
-      run: pyinstaller estakada_elec.spec
+    # ── 4. Сборка единого .app ────────────────────────────
+    - name: Build MetalCalcSuite.app
+      run: pyinstaller launcher_macos.spec
 
     # ── 5. Снять карантинный флаг macOS ──────────────────
     - name: Remove quarantine attributes
-      run: |
-        xattr -cr dist/MetalCalc.app
-        xattr -cr dist/EstakadaPipe.app
-        xattr -cr dist/EstakadaElec.app
+      run: xattr -cr dist/MetalCalcSuite.app
 
-    # ── 6. Упаковка в один DMG ────────────────────────────
-    - name: Create DMG (all three apps)
+    # ── 6. Упаковка в DMG ─────────────────────────────────
+    - name: Create DMG
       run: |
-        mkdir dmg_staging
-        cp -r dist/MetalCalc.app     dmg_staging/
-        cp -r dist/EstakadaPipe.app  dmg_staging/
-        cp -r dist/EstakadaElec.app  dmg_staging/
         hdiutil create \
           -volname "MetalCalc Suite" \
-          -srcfolder dmg_staging \
+          -srcfolder dist/MetalCalcSuite.app \
           -ov -format UDZO \
-          "dist/MetalCalc-Suite.dmg"
+          "dist/MetalCalcSuite.dmg"
 
     # ── 7. Загрузить DMG как артефакт ─────────────────────
     - name: Upload DMG
       uses: actions/upload-artifact@v4
       with:
-        name: MetalCalc-Suite-DMG
-        path: dist/MetalCalc-Suite.dmg
+        name: MetalCalcSuite-DMG
+        path: dist/MetalCalcSuite.dmg
         if-no-files-found: error
 
     # ── 8. Показать лог при ошибке ────────────────────────
