@@ -1,0 +1,59 @@
+name: Build macOS DMG
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+    # ── 1. Получить код ───────────────────────────────────
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # ── 2. Python 3.11 ────────────────────────────────────
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    # ── 3. Зависимости ────────────────────────────────────
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install customtkinter pyinstaller
+
+    # ── 4. Сборка .app ────────────────────────────────────
+    - name: Build .app
+      run: |
+        pyinstaller metal_macos.spec
+
+    # ── 5. Упаковка в DMG ─────────────────────────────────
+    - name: Create DMG
+      run: |
+        mkdir dmg_staging
+        cp -r "dist/MetalCalc.app" dmg_staging/
+        hdiutil create \
+          -volname "MetalCalc" \
+          -srcfolder dmg_staging \
+          -ov -format UDZO \
+          "dist/MetalCalc.dmg"
+
+    # ── 6. Загрузить DMG как артефакт ─────────────────────
+    - name: Upload DMG
+      uses: actions/upload-artifact@v4
+      with:
+        name: MetalCalc-DMG
+        path: dist/MetalCalc.dmg
+        if-no-files-found: error
+
+    # ── 7. Показать лог при ошибке ────────────────────────
+    - name: Show error details
+      if: failure()
+      run: |
+        ls -la dist/ 2>/dev/null || echo "dist folder empty"
+        ls -la build/ 2>/dev/null || echo "build folder empty"
