@@ -334,10 +334,17 @@ from kivy.uix.spinner import Spinner
 from kivy.uix.checkbox import CheckBox
 from kivy.metrics import dp
 from kivy.clock import Clock
+from kivy.properties import StringProperty, BooleanProperty
 
 _BLUE  = (0.18, 0.45, 0.8, 1)
 _DARK  = (0.13, 0.13, 0.13, 1)
 _GRAY  = (0.25, 0.25, 0.25, 1)
+
+
+class _Toolbar(BoxLayout):
+    title = StringProperty("")
+    back  = BooleanProperty(False)
+
 
 KV = """
 #:import dp kivy.metrics.dp
@@ -346,9 +353,7 @@ ScreenManager:
     InputScreen:
     ResultScreen:
 
-<_Toolbar@BoxLayout>:
-    title: ""
-    back: False
+<_Toolbar>:
     size_hint_y: None
     height: dp(50)
     canvas.before:
@@ -455,11 +460,33 @@ class ResultScreen(Screen):
 class MetalApp(App):
 
     def build(self):
-        self.title = "Металлоёмкость зданий v1.0"
-        root = Builder.load_string(KV)
-        self.sm = root
-        self._build_form(root.get_screen("input").ids.form)
-        return root
+        try:
+            self.title = "Металлоёмкость зданий v1.0"
+            root = Builder.load_string(KV)
+            self.sm = root
+            self._build_form(root.get_screen("input").ids.form)
+            return root
+        except Exception:
+            tb = traceback.format_exc()
+            # Показать ошибку прямо на экране
+            box = BoxLayout(orientation="vertical")
+            sv = ScrollView()
+            lbl = Label(
+                text="[b][color=ff4444]ОШИБКА ЗАПУСКА:[/color][/b]\n\n" + tb,
+                markup=True,
+                size_hint_y=None,
+                font_size="11sp",
+                padding=(10, 10),
+                halign="left",
+                valign="top",
+            )
+            lbl.bind(
+                width=lambda *_: lbl.setter("text_size")(lbl, (lbl.width, None)),
+                texture_size=lambda *_: lbl.setter("height")(lbl, lbl.texture_size[1]),
+            )
+            sv.add_widget(lbl)
+            box.add_widget(sv)
+            return box
 
     # ── Вспомогательные виджеты ──────────────────────────
 
