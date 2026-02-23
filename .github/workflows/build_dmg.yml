@@ -38,9 +38,11 @@ jobs:
     # ── 6. Упаковка в DMG ─────────────────────────────────
     - name: Create DMG
       run: |
+        mkdir dmg_staging
+        cp -r dist/MetalCalcSuite.app dmg_staging/
         hdiutil create \
           -volname "MetalCalc Suite" \
-          -srcfolder dist/MetalCalcSuite.app \
+          -srcfolder dmg_staging \
           -ov -format UDZO \
           "dist/MetalCalcSuite.dmg"
 
