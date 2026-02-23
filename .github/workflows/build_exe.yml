@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
     # ── 1. Получить код ───────────────────────────────────
@@ -27,20 +27,34 @@ jobs:
         pip install --upgrade pip
         pip install customtkinter pyinstaller
 
-    # ── 4. Сборка одного EXE ──────────────────────────────
-    - name: Build EXE
-      run: |
-        pyinstaller metal_windows.spec
+    # ── 4. Сборка трёх EXE ────────────────────────────────
+    - name: Build Calcmet.exe (производственные здания)
+      run: pyinstaller metal_windows.spec
 
-    # ── 5. Загрузить EXE как артефакт ─────────────────────
-    - name: Upload EXE
+    - name: Build EstakadaPipe.exe (трубопроводные эстакады 3.2F)
+      run: pyinstaller estakada_pipe_windows.spec
+
+    - name: Build EstakadaElec.exe (кабельные эстакады 4.2F)
+      run: pyinstaller estakada_elec_windows.spec
+
+    # ── 5. Упаковка в один ZIP ────────────────────────────
+    - name: Create ZIP (all three EXEs)
+      run: |
+        mkdir dist\MetalCalc-Suite
+        copy dist\Calcmet.exe      dist\MetalCalc-Suite\
+        copy dist\EstakadaPipe.exe dist\MetalCalc-Suite\
+        copy dist\EstakadaElec.exe dist\MetalCalc-Suite\
+        powershell Compress-Archive -Path dist\MetalCalc-Suite\* -DestinationPath dist\MetalCalc-Suite-Windows.zip
+
+    # ── 6. Загрузить ZIP как артефакт ─────────────────────
+    - name: Upload ZIP
       uses: actions/upload-artifact@v4
       with:
-        name: Calcmet-EXE
-        path: dist/Calcmet.exe
+        name: MetalCalc-Suite-Windows
+        path: dist\MetalCalc-Suite-Windows.zip
         if-no-files-found: error
 
-    # ── 6. Показать лог при ошибке ────────────────────────
+    # ── 7. Показать лог при ошибке ────────────────────────
     - name: Show error details
       if: failure()
       run: |
