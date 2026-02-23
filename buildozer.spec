@@ -12,7 +12,7 @@ source.exclude_patterns = main_desktop.py,metal.spec,metal_windows.spec,build_wi
 version = 1.0.0
 
 # Зависимости Python (таблицы вшиты в код — pandas/docx не нужны)
-requirements = python3,kivy==2.2.1
+requirements = python3,kivy==2.3.1
 
 # Ориентация: портрет + альбомная
 orientation = portrait
