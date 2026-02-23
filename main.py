@@ -389,7 +389,7 @@ ScreenManager:
                 pos: self.pos
                 size: self.size
         _Toolbar:
-            title: "Металлоёмкость зданий"
+            id: input_toolbar
         ScrollView:
             BoxLayout:
                 id: form
@@ -410,13 +410,13 @@ ScreenManager:
                     pos: self.pos
                     size: self.size
             Button:
-                text: "РАССЧИТАТЬ"
+                id: calc_btn
                 on_release: app.do_calculate()
                 background_color: 0.18, 0.45, 0.8, 1
                 bold: True
                 font_size: dp(14)
             Button:
-                text: "СБРОС"
+                id: reset_btn
                 on_release: app.do_reset()
                 size_hint_x: None
                 width: dp(100)
@@ -433,7 +433,7 @@ ScreenManager:
                 pos: self.pos
                 size: self.size
         _Toolbar:
-            title: "Результаты"
+            id: result_toolbar
             back: True
         ScrollView:
             Label:
@@ -464,7 +464,15 @@ class MetalApp(App):
             self.title = "Металлоёмкость зданий v1.0"
             root = Builder.load_string(KV)
             self.sm = root
-            self._build_form(root.get_screen("input").ids.form)
+            # Кириллицу выставляем из Python — KV-парсер не поддерживает
+            # non-ASCII строки в property-значениях (SyntaxError)
+            inp = root.get_screen("input")
+            res = root.get_screen("result")
+            inp.ids.input_toolbar.title = "Металлоёмкость зданий"
+            res.ids.result_toolbar.title = "Результаты"
+            inp.ids.calc_btn.text = "РАССЧИТАТЬ"
+            inp.ids.reset_btn.text = "СБРОС"
+            self._build_form(inp.ids.form)
             return root
         except Exception:
             tb = traceback.format_exc()
