@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
     # ── 1. Получить код ───────────────────────────────────
@@ -27,33 +27,46 @@ jobs:
         pip install --upgrade pip
         pip install customtkinter pyinstaller
 
-    # ── 4. Сборка .app ────────────────────────────────────
-    - name: Build .app
-      run: |
-        pyinstaller metal_macos.spec
+    # ── 4. Сборка трёх .app ───────────────────────────────
+    - name: Build MetalCalc.app (производственные здания)
+      run: pyinstaller metal_macos.spec
 
-    # ── 5. Упаковка в DMG ─────────────────────────────────
-    - name: Create DMG
+    - name: Build EstakadaPipe.app (трубопроводные эстакады 3.2F)
+      run: pyinstaller estakada_pipe.spec
+
+    - name: Build EstakadaElec.app (кабельные эстакады 4.2F)
+      run: pyinstaller estakada_elec.spec
+
+    # ── 5. Снять карантинный флаг macOS ──────────────────
+    - name: Remove quarantine attributes
+      run: |
+        xattr -cr dist/MetalCalc.app
+        xattr -cr dist/EstakadaPipe.app
+        xattr -cr dist/EstakadaElec.app
+
+    # ── 6. Упаковка в один DMG ────────────────────────────
+    - name: Create DMG (all three apps)
       run: |
         mkdir dmg_staging
-        cp -r "dist/MetalCalc.app" dmg_staging/
+        cp -r dist/MetalCalc.app     dmg_staging/
+        cp -r dist/EstakadaPipe.app  dmg_staging/
+        cp -r dist/EstakadaElec.app  dmg_staging/
         hdiutil create \
-          -volname "MetalCalc" \
+          -volname "MetalCalc Suite" \
           -srcfolder dmg_staging \
           -ov -format UDZO \
-          "dist/MetalCalc.dmg"
+          "dist/MetalCalc-Suite.dmg"
 
-    # ── 6. Загрузить DMG как артефакт ─────────────────────
+    # ── 7. Загрузить DMG как артефакт ─────────────────────
     - name: Upload DMG
       uses: actions/upload-artifact@v4
       with:
-        name: MetalCalc-DMG
-        path: dist/MetalCalc.dmg
+        name: MetalCalc-Suite-DMG
+        path: dist/MetalCalc-Suite.dmg
         if-no-files-found: error
 
-    # ── 7. Показать лог при ошибке ────────────────────────
+    # ── 8. Показать лог при ошибке ────────────────────────
     - name: Show error details
       if: failure()
       run: |
         ls -la dist/ 2>/dev/null || echo "dist folder empty"
-        ls -la build/ 2>/dev/null || echo "build folder empty"
