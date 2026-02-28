@@ -65,8 +65,8 @@ app = BUNDLE(
     icon=None,
     bundle_identifier="ru.metalcalc.suite",
     info_plist={
-        "CFBundleShortVersionString": "1.0.0",
-        "CFBundleVersion": "1.0.0",
+        "CFBundleShortVersionString": "2.0.0",
+        "CFBundleVersion": "2.0.0",
         "NSHighResolutionCapable": True,
         "NSRequiresAquaSystemAppearance": False,
     },

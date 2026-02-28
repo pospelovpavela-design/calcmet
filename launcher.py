@@ -31,19 +31,26 @@ FONT_SMALL = ("Segoe UI", 10)
 # ─────────────────────────────────────────────────────────────────────
 
 class MetalPanel(ctk.CTkToplevel):
-    """Производственные здания с мостовыми кранами."""
-    _build_ui     = _MetalApp._build_ui
-    _read_params  = _MetalApp._read_params
-    _on_calculate = _MetalApp._on_calculate
-    _on_clear     = _MetalApp._on_clear
-    _set_result   = _MetalApp._set_result
-    _show_results = _MetalApp._show_results
+    """Производственные здания с мостовыми кранами — v2.0 (многопролётная)."""
+    # Все методы скопированы из v2.0 App; globals() у них остаются из main_desktop,
+    # поэтому SpanFrame, calculate(), ROOF_MATERIALS и пр. доступны автоматически.
+    _build_ui           = _MetalApp._build_ui
+    _add_span           = _MetalApp._add_span
+    _remove_span        = _MetalApp._remove_span
+    _update_roof_label  = _MetalApp._update_roof_label
+    _get_Q_roof         = _MetalApp._get_Q_roof
+    _read_global_params = _MetalApp._read_global_params
+    _on_calculate       = _MetalApp._on_calculate
+    _on_clear           = _MetalApp._on_clear
+    _set_txt            = _MetalApp._set_txt
+    _show_results       = _MetalApp._show_results
 
     def __init__(self, master):
         super().__init__(master)
-        self.title("Металлоёмкость производственных зданий — v1.0")
-        self.geometry("1400x900")
+        self.title("Металлоёмкость производственных зданий — v2.0")
+        self.geometry("1520x960")
         self.resizable(True, True)
+        self._span_frames = []
         self._build_ui()
 
 
@@ -139,7 +146,7 @@ class LauncherApp(ctk.CTk):
 
         ctk.CTkLabel(
             self,
-            text="MetalCalc Suite  v1.0",
+            text="MetalCalc Suite  v2.0",
             font=FONT_SMALL,
             text_color="#546e7a",
         ).grid(row=5, column=0, pady=(28, 0))
