@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Металлоёмкость производственных зданий — десктопная версия v2.0
-Поддержка: многопролётные здания, кровельный пирог, режимы кранов,
+Металлоёмкость производственных зданий — десктопная версия v3.0
+Поддержка: многопролётные здания, per-span параметры, режимы кранов,
            коррекция высоты колонн, гибридное суммирование.
-БЭКАП v1.0 → main_desktop_backup_v1.py
+БЭКАП v2.0 → main_desktop_backup_v2.py
 """
 import math
 import traceback
@@ -145,6 +145,7 @@ TOOLTIPS = {
     'Q_snow':    "Нормативная снеговая нагрузка, кН/м² (СП 20.13330.2017, Прил. Ж).\nРайоны: I — 0.8, II — 1.2, III — 1.8, IV — 2.4 кН/м².",
     'Q_dust':    "Нагрузка от технологической пыли на покрытие, кН/м².\nПринимается по технологическому заданию (0–1.0 кН/м²).",
     'Q_tech':    "Технологическая нагрузка (промышленные проводки и оборудование на кровле), кН/м².",
+    'Q_roof':    "Нагрузка от кровельного покрытия (профнастил, утеплитель, мембрана и т.п.), кН/м².\nТипично: 0.15–0.50 кН/м².",
     'Q_purlin':  "Нормативная нагрузка от прогонов, кН/м².\nТипично: 0.15–0.35 кН/м².",
     'yc':        "Коэффициент надёжности по ответственности γn (ГОСТ 27751):\n• 1.0 — нормальный уровень ответственности\n• 1.1 — повышенный уровень\n• 1.2 — высший уровень",
     'rig_load':  "Нагрузка на ригель фахверка от стеновых панелей, кг/м.п.\nОпределяется по весу стеновых конструкций.",
@@ -155,6 +156,7 @@ TOOLTIPS = {
     'n_cranes':  "Количество мостовых кранов в пролёте (1 или 2).\nПри 2 кранах нагрузка на подкрановые конструкции возрастает.",
     'with_pass': "Тип тормозных конструкций:\n• С проходом — тормозная балка с настилом для обслуживания\n• Без прохода — решётчатая тормозная конструкция (легче)",
     'crane_mode':"Режим работы крана по ГОСТ 25546:\n• Режим 1-6К — лёгкий и средний режим (αпб меньше)\n• Режим 7-8К — тяжёлый режим (αпб больше, конструкции тяжелее)",
+    'has_post':  "Стойка фахверка при шаге 12м — промежуточная стойка фахверка.\nПри наличии — тип фахверка III (более тяжёлый).",
 }
 
 
@@ -257,14 +259,16 @@ def get_pipe_support_kgm2(bld_type):
 
 
 # ─────────────────────────────────────────────────────────
-#  ОСНОВНОЙ РАСЧЁТ — многопролётная версия
+#  ОСНОВНОЙ РАСЧЁТ — многопролётная версия v3.0
 # ─────────────────────────────────────────────────────────
 
 def calculate(gp: dict, spans: list) -> dict:
     """
-    gp   — глобальные параметры здания
-    spans — список пролётов: [{"L_span", "q_crane_t", "n_cranes",
-                                "with_pass", "crane_mode", "truss_type"}, ...]
+    gp   — глобальные параметры здания: L_build, Q_snow, Q_dust, Q_tech, yc
+    spans — список пролётов, каждый содержит все per-span параметры:
+            L_span, B_step, col_step, h_rail, H_col_ov,
+            Q_roof, Q_purlin, truss_type, q_crane_t, n_cranes,
+            with_pass, crane_mode, rig_load, has_post, bld_type
     Колонны: N пролётов → N+1 рядов колонн.
     Крайние ряды (2 шт.) — несут нагрузку от 1 пролёта.
     Средние ряды (N-1 шт.) — от 2 соседних пролётов.
@@ -272,96 +276,96 @@ def calculate(gp: dict, spans: list) -> dict:
     res = {}
     log = []
 
-    L_build   = gp["L_build"]
-    B_step    = gp["B_step"]
-    col_step  = gp["col_step"]
-    h_rail    = gp["h_rail"]
-    Q_snow    = gp["Q_snow"]
-    Q_dust    = gp["Q_dust"]
-    Q_roof    = gp["Q_roof"]       # сумма кровельного пирога
-    Q_tech    = gp["Q_tech"]       # П.3: технологическая нагрузка
-    Q_purlin  = gp["Q_purlin"]
-    yc        = gp["yc"]
-    rig_load  = gp["rig_load"]
-    has_post  = gp["has_post"]
-    bld_type  = gp["bld_type"]
-    H_col_ov  = gp.get("H_col_override", 0.0) or 0.0
+    L_build = gp["L_build"]
+    Q_snow  = gp["Q_snow"]
+    Q_dust  = gp["Q_dust"]
+    Q_tech  = gp["Q_tech"]
+    yc      = gp["yc"]
 
     N = len(spans)
-    W_build   = sum(s["L_span"] for s in spans)
-    S_floor   = L_build * W_build
-    P_walls   = 2 * (L_build + W_build)
-
-    # ── П.5: Высота колонны ─────────────────────────────
-    # Высота подкрановой балки h_b (Таблица 5 методики) и рельса h_r (Таблица 4)
-    max_q_cr = max(s["q_crane_t"] for s in spans)
-    h_b = col_step / 6 if max_q_cr <= 50 else col_step / 7
-    if max_q_cr <= 20:   h_r = 0.130   # КР70
-    elif max_q_cr <= 50: h_r = 0.150   # КР80
-    elif max_q_cr <= 80: h_r = 0.170   # КР100
-    else:                h_r = 0.180   # КР120
-    H_F_base = 0.6  # заглубление базы колонны, м
-    H_full = h_rail + 4.5
-    if H_col_ov > 0:
-        H_full = H_col_ov
-    # Подкрановая часть: от подошвы фундамента до низа подкрановой балки
-    H_lower = h_rail - h_b - h_r + H_F_base
-    # Надкрановая часть: от низа подкрановой балки до головы колонны
-    H_upper = H_full - H_lower
-    S_walls = P_walls * H_full
+    W_build = sum(sp["L_span"] for sp in spans)
+    S_floor = L_build * W_build
+    P_walls = 2 * (L_build + W_build)
 
     log.append(f"Пролётов: {N}  W={W_build:.0f}м  S_пола={S_floor:.0f}м²")
-    log.append(f"H_кол={H_full:.2f}м (подкр={H_lower:.2f}м  надкр={H_upper:.2f}м)")
+
+    # ── Высота колонн — per-span ────────────────────────
+    def _span_col_heights(sp):
+        h_b = sp["col_step"] / 6 if sp["q_crane_t"] <= 50 else sp["col_step"] / 7
+        if sp["q_crane_t"] <= 20:   h_r = 0.130
+        elif sp["q_crane_t"] <= 50: h_r = 0.150
+        elif sp["q_crane_t"] <= 80: h_r = 0.170
+        else:                        h_r = 0.180
+        H_full = sp["h_rail"] + 4.5
+        if sp.get("H_col_ov", 0) > 0:
+            H_full = sp["H_col_ov"]
+        H_lower = sp["h_rail"] - h_b - h_r + 0.6
+        H_upper = H_full - H_lower
+        return H_upper, H_lower, H_full
+
+    span_heights = [_span_col_heights(sp) for sp in spans]
+
+    for i, (H_upper, H_lower, H_full) in enumerate(span_heights):
+        log.append(f"Пролёт {i+1}: H_кол={H_full:.2f}м (надкр={H_upper:.2f}м  подкр={H_lower:.2f}м)")
+
+    # Для ограждения и фахверка берём max H_full
+    H_full_max = max(h[2] for h in span_heights)
+    S_walls = P_walls * H_full_max
 
     # ── 1+2. Прогоны и фермы — по пролётам ─────────────
     g_links = 0.05
-    Q_load_total = Q_roof + Q_purlin + Q_snow + Q_dust + Q_tech  # кН/м²
-    gn_total     = Q_load_total + g_links
 
-    G_pur_all_t  = 0.0
-    G_tr_m1_all  = 0.0   # суммарная масса ферм М1 (т)
-    G_tr_m2_all  = 0.0
-    span_data    = []
+    G_pur_all_t = 0.0
+    G_tr_m1_all = 0.0
+    G_tr_m2_all = 0.0
+    span_data   = []
 
     for i, sp in enumerate(spans):
         L  = sp["L_span"]
         tt = sp["truss_type"]
+        B  = sp["B_step"]
         Ss = L_build * L
 
+        # Per-span нагрузки
+        Q_load_total = sp["Q_roof"] + sp["Q_purlin"] + Q_snow + Q_dust + Q_tech + g_links
+        gn_total     = Q_load_total
+
         # Прогоны
-        a_pr = 3.0  # шаг прогонов, м
-        qp_tm = Q_load_total * a_pr * yc / 9.81
-        mp, pname = select_purlin(qp_tm, B_step)
-        n_pr = int(L / a_pr) + 1  # количество прогонов в пролёте
-        g_pur = mp * n_pr / (L * B_step)
+        a_pr = 3.0
+        qp_tm = (sp["Q_roof"] + sp["Q_purlin"] + Q_snow + Q_dust + Q_tech) * a_pr * yc / 9.81
+        mp, pname = select_purlin(qp_tm, B)
+        n_pr = int(L / a_pr) + 1
+        g_pur = mp * n_pr / (L * B)
         G_pur_t = g_pur * Ss / 1000
         G_pur_all_t += G_pur_t
 
         # Фермы — нагрузка
-        Q_tm = gn_total * B_step * yc / 9.81
-        n_tr = L_build / B_step + 1
+        n_tr = L_build / B + 1
+        Q_tm = gn_total * B * yc / 9.81
 
         # М1 (только Уголки)
         G_tr1 = None
         if tt == "Уголки":
-            Gkn = (gn_total*B_step/1000 + 0.018)*1.4*L**2/0.85*yc
-            G_tr1 = Gkn/9.81 * n_tr          # общая масса ферм в пролёте, т
+            Gkn  = (gn_total * B / 1000 + 0.018) * 1.4 * L**2 / 0.85 * yc
+            G_tr1 = Gkn / 9.81 * n_tr
             G_tr_m1_all += G_tr1
 
         # М2 (таблица)
         G_tr2 = None
         mt = get_truss_mass_m2(tt, L, Q_tm)
         if mt is not None:
-            G_tr2 = mt * n_tr               # т
+            G_tr2 = mt * n_tr
             G_tr_m2_all += G_tr2
 
         span_data.append({
             "idx": i+1, "L_span": L, "S_span": Ss, "tt": tt,
+            "B_step": B,
             "purlin": pname, "qp_tm": round(qp_tm, 3),
             "g_pur_kgm2": round(g_pur, 2), "G_pur_t": round(G_pur_t, 2),
             "Q_tm": round(Q_tm, 3),
-            "G_tr_m1": round(G_tr1, 2) if G_tr1 else "н/п",
-            "G_tr_m2": round(G_tr2, 2) if G_tr2 else "н/п",
+            "G_tr_m1": round(G_tr1, 2) if G_tr1 is not None else "н/п",
+            "G_tr_m2": round(G_tr2, 2) if G_tr2 is not None else "н/п",
+            "Q_load_total": Q_load_total,
         })
 
     res["прогоны"] = {
@@ -377,34 +381,49 @@ def calculate(gp: dict, spans: list) -> dict:
             "G_М1_т":d["G_tr_m1"],"G_М2_т":d["G_tr_m2"]} for d in span_data],
     }
 
-    # ── 3. Связи покрытия ────────────────────────────────
-    q_max_crane = max(s["q_crane_t"] for s in spans)
-    g_br = get_bracing_kgm2(q_max_crane, B_step)
+    # ── 3. Связи покрытия — per-span, суммарно ──────────
+    G_br_total = 0.0
+    br_rows = []
+    for i, sp in enumerate(spans):
+        Ss = L_build * sp["L_span"]
+        g_br_sp = get_bracing_kgm2(sp["q_crane_t"], sp["B_step"])
+        G_br_sp = g_br_sp * Ss / 1000
+        G_br_total += G_br_sp
+        br_rows.append({"пролёт": i+1, "расход_кгм2": g_br_sp, "масса_т": round(G_br_sp, 2)})
+
     res["связи_покрытия"] = {
-        "расход_кгм2": g_br,
-        "масса_общая_т": round(g_br * S_floor / 1000, 2),
+        "расход_кгм2": round(G_br_total * 1000 / S_floor, 2) if S_floor else 0,
+        "масса_общая_т": round(G_br_total, 2),
+        "по_пролётам": br_rows,
     }
 
-    # ── 4. Подстропильные фермы ──────────────────────────
+    # ── 4. Подстропильные фермы — per-span ───────────────
     G_sub_m1 = 0.0
     G_sub_m2 = 0.0
     sub_rows = []
-    if col_step == 12 and B_step < col_step:
-        n_bays = L_build / col_step
+    need_sub = any(sp["col_step"] == 12 and sp["B_step"] < sp["col_step"] for sp in spans)
+    if need_sub:
         for i, sp in enumerate(spans):
+            if not (sp["col_step"] == 12 and sp["B_step"] < sp["col_step"]):
+                sub_rows.append({"пролёт": i+1, "G_М1_т": 0, "G_М2_т": "н/п", "R_кн": 0})
+                continue
             L = sp["L_span"]
-            Q_tm = gn_total * B_step * yc / 9.81
-            R_kn = gn_total * B_step * yc * L / 2
+            B = sp["B_step"]
+            Q_load_sp = span_data[i]["Q_load_total"]
+            gn_sp = Q_load_sp
+            n_bays = L_build / sp["col_step"]
+            Q_tm_sp = gn_sp * B * yc / 9.81
+            R_kn = gn_sp * B * yc * L / 2
             R_t  = R_kn / 9.81
             Rf   = max(100, min(R_kn, 400))
-            apf  = (Rf - 100)*0.0002 + 0.044
-            G1   = apf * 144 * n_bays / N          # т (пропорционально)
+            apf  = (Rf - 100) * 0.0002 + 0.044
+            G1   = apf * 144 * n_bays / N
             G_sub_m1 += G1
             mt = get_subtruss_mass_m2(R_t)
             G2 = mt * n_bays / N if mt else None
             if G2: G_sub_m2 += G2
-            sub_rows.append({"пролёт":i+1,"R_кн":round(R_kn,1),
-                "G_М1_т":round(G1,2),"G_М2_т":round(G2,2) if G2 else "н/п"})
+            sub_rows.append({"пролёт": i+1, "R_кн": round(R_kn, 1),
+                "G_М1_т": round(G1, 2), "G_М2_т": round(G2, 2) if G2 else "н/п"})
         res["подстропильные_фермы"] = {
             "масса_общая_т_М1": round(G_sub_m1, 2),
             "масса_общая_т_М2": round(G_sub_m2, 2),
@@ -414,34 +433,28 @@ def calculate(gp: dict, spans: list) -> dict:
         res["подстропильные_фермы"] = {"примечание": "Не требуются"}
 
     # ── 5. Подкрановые балки — по рядам колонн ──────────
-    # N пролётов → N+1 рядов:
-    # Ряд 0 (крайний лев): кран пролёта 0, is_edge=True
-    # Ряд i (средний 1..N-1): краны пролётов i-1 и i, is_edge=False
-    # Ряд N (крайний прав): кран пролёта N-1, is_edge=True
-
-    L_pb = float(col_step)
-    n_bays_a = math.ceil(L_build / col_step)
+    # Для каждого ряда используем col_step соответствующего пролёта
     G_pb_m1 = 0.0
     G_pb_m2 = 0.0
-    G_pb_kn_repr = 0.0   # для расчёта колонны (репрезентативное значение)
     pb_rows = []
 
     def _pb_row(sp_obj, is_edge, label):
-        nonlocal G_pb_m1, G_pb_m2, G_pb_kn_repr
-        q = sp_obj["q_crane_t"]; nc = sp_obj["n_cranes"]
+        nonlocal G_pb_m1, G_pb_m2
+        q  = sp_obj["q_crane_t"]
+        nc = sp_obj["n_cranes"]
         wp = sp_obj["with_pass"]
         mf = CRANE_MODE_FACTOR[sp_obj["crane_mode"]]
+        L_pb_loc = float(sp_obj["col_step"])
+        n_bays_a = math.ceil(L_build / L_pb_loc)
         alp = _lkp(CRANE_BEAM_ALPHA, q)
         qr  = _lkp(RAIL_WEIGHT_KN, q)
-        G1t = (alp*L_pb + qr)*L_pb*1.4/9.81
-        Gkn = (alp*L_pb + qr)*L_pb*1.4
-        G_pb_m1     += G1t * n_bays_a
-        G_pb_kn_repr = max(G_pb_kn_repr, Gkn)
-        pb_kgm = get_crane_beam_kgm(q, L_pb, nc)
-        br_kgm = get_brake_kgm(q, L_pb, nc, wp, is_edge)
+        G1t = (alp * L_pb_loc + qr) * L_pb_loc * 1.4 / 9.81
+        G_pb_m1 += G1t * n_bays_a
+        pb_kgm = get_crane_beam_kgm(q, L_pb_loc, nc)
+        br_kgm = get_brake_kgm(q, L_pb_loc, nc, wp, is_edge)
         if pb_kgm and br_kgm is not None:
-            G_pb_m2 += (pb_kgm*mf + br_kgm*mf)*L_pb*n_bays_a/1000
-        pb_rows.append({"ряд":label,"G_М1_т":round(G1t*n_bays_a,2),"q":q})
+            G_pb_m2 += (pb_kgm * mf + br_kgm * mf) * L_pb_loc * n_bays_a / 1000
+        pb_rows.append({"ряд": label, "G_М1_т": round(G1t * n_bays_a, 2), "q": q})
 
     # Крайний левый (пролёт 0)
     _pb_row(spans[0], True, "Крайний Л")
@@ -458,115 +471,183 @@ def calculate(gp: dict, spans: list) -> dict:
         "ряды_колонн": pb_rows,
     }
 
-    # ── 6. Колонны — с учётом топологии ────────────────────
+    # ── 6. Колонны — с учётом топологии и per-span высот ─
     rho=78.5; pu=1.4; pl=2.1; kMu=0.275; kMl=0.45
     gst=0.25; aw=0.15
 
-    def _col_kg(L_sp, q_cr, H_up, H_lo):
-        Gwu = gst*H_up*(1-aw)*col_step
-        Gwl = gst*H_lo*(1-aw)*col_step
-        SFv = Q_load_total*col_step*L_sp/2 + Gwu
-        Gcu = SFv*rho*pu*H_up/(kMu*24000)
+    def _col_kg(L_sp, q_cr, H_up, H_lo, cs, Q_load_sp):
+        L_pb_loc = float(cs)
+        Gwu = gst * H_up * (1 - aw) * cs
+        Gwl = gst * H_lo * (1 - aw) * cs
+        SFv = Q_load_sp * cs * L_sp / 2 + Gwu
+        Gcu = SFv * rho * pu * H_up / (kMu * 24000)
         qeq = _lkp(CRANE_Q_EQUIV, q_cr)
-        D   = qeq*col_step*1.1*yc
+        D   = qeq * cs * 1.1 * yc
         alp = _lkp(CRANE_BEAM_ALPHA, q_cr)
         qrr = _lkp(RAIL_WEIGHT_KN, q_cr)
-        Gpb = (alp*L_pb + qrr)*L_pb*1.4
+        Gpb = (alp * L_pb_loc + qrr) * L_pb_loc * 1.4
         SFn = SFv + D + Gpb + Gwl + Gcu
-        Gcl = SFn*rho*pl*H_lo/(kMl*24000)
-        return (Gcu+Gcl)/9.81*1000
+        Gcl = SFn * rho * pl * H_lo / (kMl * 24000)
+        return (Gcu + Gcl) / 9.81 * 1000
 
-    n_col_along = round(L_build/col_step)+1
     G_cols_t = 0.0
     col_rows_detail = []
 
-    # Крайний левый ряд
-    Gce = _col_kg(spans[0]["L_span"], spans[0]["q_crane_t"], H_upper, H_lower)
-    G_cols_t += Gce*n_col_along/1000
-    col_rows_detail.append({"ряд":"Крайний Л","масса_1_кг":round(Gce,1),"масса_ряд_т":round(Gce*n_col_along/1000,2)})
+    # Крайний левый ряд — пролёт 0
+    sp0 = spans[0]
+    H_up0, H_lo0, H_full0 = span_heights[0]
+    n_col_along_0 = round(L_build / sp0["col_step"]) + 1
+    Q_load_0 = span_data[0]["Q_load_total"]
+    Gce = _col_kg(sp0["L_span"], sp0["q_crane_t"], H_up0, H_lo0, sp0["col_step"], Q_load_0)
+    G_cols_t += Gce * n_col_along_0 / 1000
+    col_rows_detail.append({
+        "ряд": "Крайний Л",
+        "масса_1_кг": round(Gce, 1),
+        "масса_ряд_т": round(Gce * n_col_along_0 / 1000, 2),
+    })
 
-    # Средние ряды
+    # Средние ряды — используем параметры левого пролёта
     for mi in range(1, N):
-        sL = spans[mi-1]; sR = spans[mi]
-        Gwu = gst*H_upper*(1-aw)*col_step
-        Gwl = gst*H_lower*(1-aw)*col_step
-        SFv = Q_load_total*col_step*(sL["L_span"]+sR["L_span"])/2 + Gwu
-        Gcu = SFv*rho*pu*H_upper/(kMu*24000)
+        sL = spans[mi-1]
+        sR = spans[mi]
+        H_upL, H_loL, H_fullL = span_heights[mi-1]
+        cs_mid = sL["col_step"]
+        n_col_mid = round(L_build / cs_mid) + 1
+        Q_load_L = span_data[mi-1]["Q_load_total"]
+        Q_load_R = span_data[mi]["Q_load_total"]
+        Gwu = gst * H_upL * (1 - aw) * cs_mid
+        Gwl = gst * H_loL * (1 - aw) * cs_mid
+        SFv = (Q_load_L + Q_load_R) * cs_mid * (sL["L_span"] + sR["L_span"]) / 4 + Gwu
+        Gcu = SFv * rho * pu * H_upL / (kMu * 24000)
         qeqL = _lkp(CRANE_Q_EQUIV, sL["q_crane_t"])
         qeqR = _lkp(CRANE_Q_EQUIV, sR["q_crane_t"])
-        D = (qeqL+qeqR)*col_step*1.1*yc
-        alpL=_lkp(CRANE_BEAM_ALPHA,sL["q_crane_t"]); qrL=_lkp(RAIL_WEIGHT_KN,sL["q_crane_t"])
-        alpR=_lkp(CRANE_BEAM_ALPHA,sR["q_crane_t"]); qrR=_lkp(RAIL_WEIGHT_KN,sR["q_crane_t"])
-        Gpb = ((alpL*L_pb+qrL)*L_pb*1.4 + (alpR*L_pb+qrR)*L_pb*1.4)
+        D = (qeqL + qeqR) * cs_mid * 1.1 * yc
+        alpL = _lkp(CRANE_BEAM_ALPHA, sL["q_crane_t"])
+        qrL  = _lkp(RAIL_WEIGHT_KN,  sL["q_crane_t"])
+        alpR = _lkp(CRANE_BEAM_ALPHA, sR["q_crane_t"])
+        qrR  = _lkp(RAIL_WEIGHT_KN,  sR["q_crane_t"])
+        L_pb_L = float(sL["col_step"])
+        L_pb_R = float(sR["col_step"])
+        Gpb = (alpL * L_pb_L + qrL) * L_pb_L * 1.4 + (alpR * L_pb_R + qrR) * L_pb_R * 1.4
         SFn = SFv + D + Gpb + Gwl + Gcu
-        Gcl = SFn*rho*pl*H_lower/(kMl*24000)
-        Gcm_kg = (Gcu+Gcl)/9.81*1000
-        G_cols_t += Gcm_kg*n_col_along/1000
-        col_rows_detail.append({"ряд":f"Средний {mi}","масса_1_кг":round(Gcm_kg,1),"масса_ряд_т":round(Gcm_kg*n_col_along/1000,2)})
+        Gcl = SFn * rho * pl * H_loL / (kMl * 24000)
+        Gcm_kg = (Gcu + Gcl) / 9.81 * 1000
+        G_cols_t += Gcm_kg * n_col_mid / 1000
+        col_rows_detail.append({
+            "ряд": f"Средний {mi}",
+            "масса_1_кг": round(Gcm_kg, 1),
+            "масса_ряд_т": round(Gcm_kg * n_col_mid / 1000, 2),
+        })
 
-    # Крайний правый ряд
-    Gce2 = _col_kg(spans[N-1]["L_span"], spans[N-1]["q_crane_t"], H_upper, H_lower)
-    G_cols_t += Gce2*n_col_along/1000
-    col_rows_detail.append({"ряд":"Крайний П","масса_1_кг":round(Gce2,1),"масса_ряд_т":round(Gce2*n_col_along/1000,2)})
+    # Крайний правый ряд — пролёт N-1
+    spN = spans[N-1]
+    H_upN, H_loN, H_fullN = span_heights[N-1]
+    n_col_along_N = round(L_build / spN["col_step"]) + 1
+    Q_load_N = span_data[N-1]["Q_load_total"]
+    Gce2 = _col_kg(spN["L_span"], spN["q_crane_t"], H_upN, H_loN, spN["col_step"], Q_load_N)
+    G_cols_t += Gce2 * n_col_along_N / 1000
+    col_rows_detail.append({
+        "ряд": "Крайний П",
+        "масса_1_кг": round(Gce2, 1),
+        "масса_ряд_т": round(Gce2 * n_col_along_N / 1000, 2),
+    })
 
-    n_col_total = n_col_along*(N+1)
+    n_col_total = n_col_along_0 * (N + 1)
+
+    # Для отображения — первый пролёт
+    H_full_disp  = span_heights[0][2]
+    H_upper_disp = span_heights[0][0]
+    H_lower_disp = span_heights[0][1]
+
+    # Сохраним все высоты по пролётам для отображения
+    span_heights_list = [
+        {"пролёт": i+1, "H_full": round(h[2], 2),
+         "H_upper": round(h[0], 2), "H_lower": round(h[1], 2)}
+        for i, h in enumerate(span_heights)
+    ]
+
     res["колонны"] = {
         "n_колонн": n_col_total,
-        "H_full_м": round(H_full,2), "H_upper_м": round(H_upper,2), "H_lower_м": round(H_lower,2),
-        "расход_кгм2": round(G_cols_t*1000/S_floor, 2),
+        "H_full_м":  round(H_full_disp, 2),
+        "H_upper_м": round(H_upper_disp, 2),
+        "H_lower_м": round(H_lower_disp, 2),
+        "высоты_пролётов": span_heights_list,
+        "расход_кгм2": round(G_cols_t * 1000 / S_floor, 2) if S_floor else 0,
         "масса_общая_т": round(G_cols_t, 2),
         "по_рядам": col_rows_detail,
     }
 
-    # ── 7. Фахверк ──────────────────────────────────────
-    gf = get_fakhverk_kgm2(col_step, has_post, H_full, rig_load)
-    if gf:
-        res["фахверк"] = {"расход_кгм2_стены":gf,"площадь_стен_м2":round(S_walls,1),
-                          "масса_общая_т":round(gf*S_walls/1000,2)}
+    # ── 7. Фахверк — per-span ──────────────────────────
+    G_fakh_total = 0.0
+    fakh_rows = []
+    for i, sp in enumerate(spans):
+        H_full_sp = span_heights[i][2]
+        # Площадь стен, приходящаяся на данный пролёт (пропорционально)
+        S_walls_sp = P_walls * H_full_sp / N
+        gf = get_fakhverk_kgm2(sp["col_step"], sp["has_post"], H_full_sp, sp["rig_load"])
+        if gf:
+            G_fakh_sp = gf * S_walls_sp / 1000
+            G_fakh_total += G_fakh_sp
+            fakh_rows.append({"пролёт": i+1, "расход_кгм2_стены": gf,
+                               "масса_т": round(G_fakh_sp, 2)})
+        else:
+            fakh_rows.append({"пролёт": i+1, "ошибка": "Не определён", "масса_т": 0})
+
+    if G_fakh_total > 0:
+        res["фахверк"] = {
+            "расход_кгм2_стены": round(G_fakh_total * 1000 / S_walls, 2) if S_walls else 0,
+            "площадь_стен_м2": round(S_walls, 1),
+            "масса_общая_т": round(G_fakh_total, 2),
+            "по_пролётам": fakh_rows,
+        }
     else:
-        res["фахверк"] = {"ошибка":"Не определён","масса_общая_т":0}
+        res["фахверк"] = {"ошибка": "Не определён", "масса_общая_т": 0,
+                          "по_пролётам": fakh_rows}
 
     # ── 8. Ограждение ───────────────────────────────────
-    res["ограждение"] = {"стены_м2":round(S_walls,1),"кровля_м2":round(S_floor,1)}
+    res["ограждение"] = {"стены_м2": round(S_walls, 1), "кровля_м2": round(S_floor, 1)}
 
-    # ── 9. Опоры трубопроводов ──────────────────────────
-    gp2 = get_pipe_support_kgm2(bld_type)
+    # ── 9. Опоры трубопроводов — per-span ───────────────
+    G_pipe_total = 0.0
+    pipe_rows = []
+    for i, sp in enumerate(spans):
+        Ss = L_build * sp["L_span"]
+        gp2 = get_pipe_support_kgm2(sp["bld_type"])
+        G_pipe_sp = gp2 * Ss / 1000
+        G_pipe_total += G_pipe_sp
+        pipe_rows.append({"пролёт": i+1, "расход_кгм2": gp2, "масса_т": round(G_pipe_sp, 2)})
+
     res["опоры_трубопроводов"] = {
-        "расход_кгм2": gp2,
-        "масса_общая_т": round(gp2*S_floor/1000, 2),
+        "расход_кгм2": round(G_pipe_total * 1000 / S_floor, 2) if S_floor else 0,
+        "масса_общая_т": round(G_pipe_total, 2),
+        "по_пролётам": pipe_rows,
     }
 
     # ── П.6: Гибридное суммирование ─────────────────────
-    # Элементы только в М1: прогоны, колонны → в оба итога
-    # Элементы только в М2: связи, фахверк, опоры → в оба итога
-    # Элементы в М1 и М2: фермы, подстроп., подкрановые → берём соотв. метод
     def sv(d, *keys):
         for k in keys:
             v = d.get(k)
             if isinstance(v, (int, float)): return float(v)
         return 0.0
 
-    # Общие (одинаковы в М1 и М2)
     common = (
-        sv(res["прогоны"],           "масса_общая_т")
-        + sv(res["колонны"],         "масса_общая_т")
-        + sv(res["связи_покрытия"],  "масса_общая_т")
-        + sv(res["фахверк"],         "масса_общая_т")
+        sv(res["прогоны"],               "масса_общая_т")
+        + sv(res["колонны"],             "масса_общая_т")
+        + sv(res["связи_покрытия"],      "масса_общая_т")
+        + sv(res["фахверк"],             "масса_общая_т")
         + sv(res["опоры_трубопроводов"], "масса_общая_т")
     )
 
-    # Специфика М1: фермы(М1) + подстроп(М1) + подкрановые(М1)
     m1_spec = (
-        sv(res["фермы"],                    "масса_общая_т_М1")
-        + sv(res["подстропильные_фермы"],   "масса_общая_т_М1")
-        + sv(res["подкрановые_балки"],      "масса_общая_т_М1")
+        sv(res["фермы"],                  "масса_общая_т_М1")
+        + sv(res["подстропильные_фермы"], "масса_общая_т_М1")
+        + sv(res["подкрановые_балки"],    "масса_общая_т_М1")
     )
 
-    # Специфика М2: фермы(М2) + подстроп(М2) + подкрановые(М2)
     m2_spec = (
-        sv(res["фермы"],                    "масса_общая_т_М2")
-        + sv(res["подстропильные_фермы"],   "масса_общая_т_М2")
-        + sv(res["подкрановые_балки"],      "масса_общая_т_М2")
+        sv(res["фермы"],                  "масса_общая_т_М2")
+        + sv(res["подстропильные_фермы"], "масса_общая_т_М2")
+        + sv(res["подкрановые_балки"],    "масса_общая_т_М2")
     )
 
     total_m1 = common + m1_spec
@@ -575,8 +656,8 @@ def calculate(gp: dict, spans: list) -> dict:
     res["итого"] = {
         "М1_т":    round(total_m1, 2),
         "М2_т":    round(total_m2, 2),
-        "М1_кгм2": round(total_m1*1000/S_floor, 2) if S_floor else 0,
-        "М2_кгм2": round(total_m2*1000/S_floor, 2) if S_floor else 0,
+        "М1_кгм2": round(total_m1 * 1000 / S_floor, 2) if S_floor else 0,
+        "М2_кгм2": round(total_m2 * 1000 / S_floor, 2) if S_floor else 0,
         "min_т":   round(min(total_m1, total_m2), 2),
         "max_т":   round(max(total_m1, total_m2), 2),
         "S_floor": round(S_floor, 1),
@@ -657,7 +738,7 @@ class FloatEntry(ctk.CTkEntry):
 
 
 class SpanFrame(ctk.CTkFrame):
-    """Карточка одного пролёта."""
+    """Карточка одного пролёта — все per-span параметры."""
 
     def __init__(self, parent, span_num: int, on_remove):
         super().__init__(parent, fg_color="#1e2a3a", corner_radius=8)
@@ -668,7 +749,7 @@ class SpanFrame(ctk.CTkFrame):
     def _build(self, n):
         # Заголовок
         hdr = ctk.CTkFrame(self, fg_color="#243347", corner_radius=6)
-        hdr.pack(fill="x", padx=6, pady=(6,2))
+        hdr.pack(fill="x", padx=6, pady=(6, 2))
         self._lbl = ctk.CTkLabel(hdr, text=f"  Пролёт {n}", font=FT,
                                   text_color="#4fc3f7")
         self._lbl.pack(side="left", padx=4, pady=4)
@@ -680,34 +761,106 @@ class SpanFrame(ctk.CTkFrame):
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="x", padx=8, pady=4)
         body.columnconfigure(1, weight=1)
+        body.columnconfigure(2, weight=0)
 
-        r = 0
-        def lbl(text):
-            nonlocal r
-            ctk.CTkLabel(body, text=text, font=FL, anchor="w").grid(
-                row=r, column=0, sticky="w", **PAD)
-        def fe(default):
-            nonlocal r
+        self._row = 0
+
+        def sec(text):
+            ctk.CTkLabel(body, text=text, font=FT, text_color="#4fc3f7",
+                         anchor="w").grid(
+                row=self._row, column=0, columnspan=3, sticky="w",
+                padx=PAD["padx"], pady=(8, 2))
+            self._row += 1
+
+        def fe(lbl, default, tip_key=None):
+            ctk.CTkLabel(body, text=lbl, font=FL, anchor="w").grid(
+                row=self._row, column=0, sticky="w", **PAD)
             e = FloatEntry(body, width=110)
             e.insert(0, str(default))
-            e.grid(row=r, column=1, sticky="w", **PAD)
-            r += 1
+            e.grid(row=self._row, column=1, sticky="w", **PAD)
+            if tip_key and tip_key in TOOLTIPS:
+                qb = ctk.CTkButton(
+                    body, text="?", width=22, height=22,
+                    fg_color="transparent", hover_color="#2a3a5a",
+                    text_color="#5588cc", border_color="#3a5a8a", border_width=1,
+                    font=FH, command=lambda: None, corner_radius=11,
+                )
+                qb.grid(row=self._row, column=2, sticky="w", padx=(2, 4), pady=PAD["pady"])
+                ToolTip(qb, TOOLTIPS[tip_key])
+            self._row += 1
             return e
-        def cmb(values, default=None):
-            nonlocal r
+
+        def cmb(lbl, values, default=None, tip_key=None):
+            ctk.CTkLabel(body, text=lbl, font=FL, anchor="w").grid(
+                row=self._row, column=0, sticky="w", **PAD)
             v = ctk.StringVar(value=default or values[0])
-            c = ctk.CTkComboBox(body, values=values, variable=v, width=160)
-            c.grid(row=r, column=1, sticky="w", **PAD)
-            r += 1
+            c = ctk.CTkComboBox(body, values=values, variable=v, width=200)
+            c.grid(row=self._row, column=1, sticky="w", **PAD)
+            if tip_key and tip_key in TOOLTIPS:
+                qb = ctk.CTkButton(
+                    body, text="?", width=22, height=22,
+                    fg_color="transparent", hover_color="#2a3a5a",
+                    text_color="#5588cc", border_color="#3a5a8a", border_width=1,
+                    font=FH, command=lambda: None, corner_radius=11,
+                )
+                qb.grid(row=self._row, column=2, sticky="w", padx=(2, 4), pady=PAD["pady"])
+                ToolTip(qb, TOOLTIPS[tip_key])
+            self._row += 1
             return v
 
-        lbl("Пролёт фермы L, м:");       r+=1; self.e_L   = fe(24);  ToolTip(self.e_L,  TOOLTIPS.get('L_span',''))
-        lbl("Тип фермы:");                r+=1; self.v_tt  = cmb(["Уголки","Двутавры","Молодечно"])
-        lbl("Г/п крана, т:");             r+=1; self.e_q   = fe(50);  ToolTip(self.e_q,  TOOLTIPS.get('q_crane',''))
-        lbl("Кранов в пролёте:");         r+=1; self.v_nc  = cmb(["1","2"])
-        lbl("Тормозные пути:");           r+=1; self.v_wp  = cmb(["С проходом","Без прохода"])
-        # П.4: Режим работы кранов
-        lbl("Режим работы крана:");       r+=1; self.v_cm  = cmb(list(CRANE_MODE_FACTOR.keys()), "Режим 1-6К")
+        def chk(lbl, default=False, tip_key=None):
+            var = ctk.BooleanVar(value=default)
+            cb = ctk.CTkCheckBox(body, text=lbl, variable=var, font=FL)
+            cb.grid(row=self._row, column=0, columnspan=2, sticky="w", **PAD)
+            if tip_key and tip_key in TOOLTIPS:
+                qb = ctk.CTkButton(
+                    body, text="?", width=22, height=22,
+                    fg_color="transparent", hover_color="#2a3a5a",
+                    text_color="#5588cc", border_color="#3a5a8a", border_width=1,
+                    font=FH, command=lambda: None, corner_radius=11,
+                )
+                qb.grid(row=self._row, column=2, sticky="w", padx=(2, 4), pady=PAD["pady"])
+                ToolTip(qb, TOOLTIPS[tip_key])
+            self._row += 1
+            return var
+
+        # ── Геометрия пролёта ──────────────────────────
+        sec("Геометрия пролёта")
+        self.e_L    = fe("Пролёт L, м",                          24,   'L_span')
+        self.v_B    = cmb("Шаг ферм B, м",      ["6", "12"],     "6",  'B_step')
+        self.v_col  = cmb("Шаг колонн, м",      ["6", "12"],     "12", 'col_step')
+        self.e_rail = fe("Уровень рельса, м",                     10.0, 'h_rail')
+        self.e_hov  = fe("Переопределить H_кол, м (0=авто)",      0,    'H_col_ov')
+
+        # ── Кровля и прогоны ───────────────────────────
+        sec("Кровля и прогоны")
+        self.e_roof = fe("Нагрузка кровли, кН/м²",  0.30, 'Q_roof')
+        self.e_pur  = fe("Вес прогонов, кН/м²",     0.35, 'Q_purlin')
+
+        # ── Кран ───────────────────────────────────────
+        sec("Кран")
+        self.v_tt  = cmb("Тип фермы",
+                         ["Уголки", "Двутавры", "Молодечно"],
+                         tip_key='truss_type')
+        self.e_q   = fe("Г/п крана, т",  50, 'q_crane')
+        self.v_nc  = cmb("Кранов в пролёте", ["1", "2"])
+        self.v_wp  = cmb("Тормозные пути",
+                         ["С проходом", "Без прохода"],
+                         tip_key='with_pass')
+        self.v_cm  = cmb("Режим работы крана",
+                         list(CRANE_MODE_FACTOR.keys()),
+                         "Режим 1-6К",
+                         tip_key='crane_mode')
+
+        # ── Фахверк и тип здания ───────────────────────
+        sec("Фахверк и тип здания")
+        self.e_rig      = fe("Нагрузка на ригели, кг/м.п.", 0, 'rig_load')
+        self.v_post_var = chk("Стойка фахверка (шаг 12м)", False, 'has_post')
+        self.v_bld      = cmb("Тип здания",
+                              ["Основные производственные",
+                               "Здания энергоносителей",
+                               "Вспомогательные здания"],
+                              tip_key='bld_type')
 
     def update_title(self, n):
         self._num = n
@@ -716,19 +869,28 @@ class SpanFrame(ctk.CTkFrame):
     def get_params(self) -> dict:
         return {
             "L_span":     self.e_L.get_float(24),
+            "B_step":     float(self.v_B.get()),
+            "col_step":   float(self.v_col.get()),
+            "h_rail":     self.e_rail.get_float(10.0),
+            "H_col_ov":   self.e_hov.get_float(0),
+            "Q_roof":     self.e_roof.get_float(0.30),
+            "Q_purlin":   self.e_pur.get_float(0.35),
+            "truss_type": self.v_tt.get(),
             "q_crane_t":  self.e_q.get_float(50),
             "n_cranes":   int(self.v_nc.get()),
             "with_pass":  self.v_wp.get() == "С проходом",
             "crane_mode": self.v_cm.get(),
-            "truss_type": self.v_tt.get(),
+            "rig_load":   self.e_rig.get_float(0),
+            "has_post":   self.v_post_var.get(),
+            "bld_type":   self.v_bld.get(),
         }
 
 
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Металлоёмкость производственных зданий v2.0")
-        self.geometry("1520x960")
+        self.title("Металлоёмкость производственных зданий v3.0")
+        self.geometry("1580x980")
         self.resizable(True, True)
         self._span_frames: list[SpanFrame] = []
         self._last_results_text = ""
@@ -742,8 +904,8 @@ class App(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
 
         # ─ Левая панель ─────────────────────────────────
-        left = ctk.CTkScrollableFrame(self, label_text="Входные параметры", width=520)
-        left.grid(row=0, column=0, sticky="nsew", padx=(10,5), pady=10)
+        left = ctk.CTkScrollableFrame(self, label_text="Входные параметры", width=540)
+        left.grid(row=0, column=0, sticky="nsew", padx=(10, 5), pady=10)
         left.columnconfigure(1, weight=1)
         left.columnconfigure(2, weight=0)
 
@@ -751,11 +913,10 @@ class App(ctk.CTk):
 
         def sec(t):
             ctk.CTkLabel(left, text=t, font=FT, text_color="#4fc3f7").grid(
-                row=self._r, column=0, columnspan=2, sticky="w", **PAD)
+                row=self._r, column=0, columnspan=3, sticky="w", **PAD)
             self._r += 1
 
         def _qbtn(tip_key):
-            """Маленькая кнопка «?» с подсказкой в колонке 2."""
             if tip_key and tip_key in TOOLTIPS:
                 qb = ctk.CTkButton(
                     left, text="?", width=22, height=22,
@@ -777,74 +938,21 @@ class App(ctk.CTk):
             _qbtn(tip_key)
             return e
 
-        def cmb(lbl, vals, default=None, tip_key=None):
-            ctk.CTkLabel(left, text=lbl, font=FL, anchor="w").grid(
-                row=self._r, column=0, sticky="w", **PAD)
-            v = ctk.StringVar(value=default or vals[0])
-            c = ctk.CTkComboBox(left, values=vals, variable=v, width=160)
-            c.grid(row=self._r, column=1, sticky="w", **PAD)
-            self._r += 1
-            _qbtn(tip_key)
-            return v
-
-        def chk(lbl, default=False):
-            v = ctk.BooleanVar(value=default)
-            c = ctk.CTkCheckBox(left, text=lbl, variable=v, font=FL)
-            c.grid(row=self._r, column=0, columnspan=2, sticky="w", **PAD)
-            self._r += 1
-            return v
-
-        # Геометрия
+        # ── Геометрия здания ────────────────────────────
         sec("Геометрия здания")
-        self.e_L_build  = ent("Длина по осям, м", 120,  'L_build')
-        self.e_B_step   = ent("Шаг ферм B, м", 6,       'B_step')
-        self.v_col_step = cmb("Шаг колонн, м", ["6","12"], "12", tip_key='col_step')
-        self.e_h_rail   = ent("Уровень головки рельса (УГР), м", 8.0, 'h_rail')
+        self.e_L_build = ent("Длина по осям, м", 120, 'L_build')
 
-        # П.5: Коррекция высоты (опционально)
-        sec("Высота колонны (авто = УГР + 4.5 м)")
-        self.e_h_col_ov = ent("Переопределить H_кол, м (0 = авто)", 0, 'H_col_ov')
+        # ── Нагрузки ───────────────────────────────────
+        sec("Нагрузки (кН/м²)")
+        self.e_Q_snow = ent("Снег Qснег",               2.1, 'Q_snow')
+        self.e_Q_dust = ent("Пыль Qпыль",               0.0, 'Q_dust')
+        self.e_Q_tech = ent("Технол. нагрузка, кН/м²",  0.0, 'Q_tech')
 
-        # Нагрузки
-        sec("Нагрузки (расчётные, кН/м²)")
-        self.e_Q_snow   = ent("Снег Qснег", 2.1,  'Q_snow')
-        self.e_Q_dust   = ent("Пыль Qпыль", 0.0,  'Q_dust')
-        # П.3: Технологическая нагрузка
-        self.e_Q_tech   = ent("Технол. нагрузка (пром. проводки/обор.), кН/м²", 0.0, 'Q_tech')
-        self.e_Q_purlin = ent("Вес прогона Qвес.прог., кН/м²", 0.35, 'Q_purlin')
-        self.e_yc       = ent("Коэф. ответственности γc", 1.0, 'yc')
+        # ── Общие параметры ─────────────────────────────
+        sec("Общие параметры")
+        self.e_yc = ent("Коэф. ответственности γc", 1.0, 'yc')
 
-        # П.2: Кровельный пирог
-        sec("Кровельный пирог (Qкровля считается автоматически)")
-        self._roof_vars: dict[str, ctk.BooleanVar] = {}
-        for mat, w in ROOF_MATERIALS.items():
-            v = ctk.BooleanVar(value=False)
-            cb = ctk.CTkCheckBox(left, text=f"{mat}  [{w:.2f} кН/м²]",
-                                  variable=v, font=FH,
-                                  command=self._update_roof_label)
-            cb.grid(row=self._r, column=0, columnspan=2, sticky="w",
-                    padx=PAD["padx"], pady=1)
-            self._r += 1
-            self._roof_vars[mat] = v
-
-        self.lbl_roof_sum = ctk.CTkLabel(
-            left, text="Qкровля = 0.00 кН/м²", font=FL, text_color="#ffcc80")
-        self.lbl_roof_sum.grid(row=self._r, column=0, columnspan=2,
-                                sticky="w", **PAD)
-        self._r += 1
-
-        # Фахверк
-        sec("Фахверк")
-        self.e_rig_load = ent("Нагрузка на ригели, кг/м.п.", 0, 'rig_load')
-        self.v_has_post = chk("Стойка фахверка (шаг 12м)")
-
-        # Тип здания
-        sec("Тип здания")
-        self.v_bld_type = cmb("Тип здания",
-            ["Основные производственные","Здания энергоносителей","Вспомогательные здания"],
-            tip_key='bld_type')
-
-        # Кнопки
+        # ── Кнопки ─────────────────────────────────────
         self._r += 1
         btn_fr = ctk.CTkFrame(left, fg_color="transparent")
         btn_fr.grid(row=self._r, column=0, columnspan=3, pady=8)
@@ -859,17 +967,18 @@ class App(ctk.CTk):
             fg_color="#1b5e20", hover_color="#2e7d32", state="disabled",
             command=self._save_results)
         self.btn_save.pack(side="left", padx=5)
-        ToolTip(self.btn_save, "Сохранить результаты расчёта в текстовый файл (.txt).\nДоступно после нажатия «Рассчитать».")
+        ToolTip(self.btn_save,
+                "Сохранить результаты расчёта в текстовый файл (.txt).\nДоступно после нажатия «Рассчитать».")
         self._r += 1
 
-        # Пролёты
+        # ── Пролёты ────────────────────────────────────
         sec("─── Пролёты здания ───────────────────────────────")
         self._spans_container = ctk.CTkFrame(left, fg_color="transparent")
-        self._spans_container.grid(row=self._r, column=0, columnspan=2, sticky="ew")
+        self._spans_container.grid(row=self._r, column=0, columnspan=3, sticky="ew")
         self._r += 1
 
         add_btn_row = ctk.CTkFrame(left, fg_color="transparent")
-        add_btn_row.grid(row=self._r, column=0, columnspan=2, pady=4)
+        add_btn_row.grid(row=self._r, column=0, columnspan=3, pady=4)
         ctk.CTkButton(add_btn_row, text="＋ Добавить пролёт", font=FL,
                       fg_color="#1b5e20", hover_color="#2e7d32",
                       command=self._add_span).pack()
@@ -880,26 +989,18 @@ class App(ctk.CTk):
 
         # ─ Правая панель ────────────────────────────────
         right = ctk.CTkFrame(self)
-        right.grid(row=0, column=1, sticky="nsew", padx=(5,10), pady=10)
+        right.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=10)
         right.grid_rowconfigure(1, weight=1)
         right.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(right, text="Результаты расчёта", font=FT
-                     ).grid(row=0, column=0, sticky="w", padx=10, pady=(10,0))
+                     ).grid(row=0, column=0, sticky="w", padx=10, pady=(10, 0))
         self.txt = ctk.CTkTextbox(right, font=FRE, wrap="word", state="disabled")
-        self.txt.grid(row=1, column=0, sticky="nsew", padx=10, pady=(5,10))
+        self.txt.grid(row=1, column=0, sticky="nsew", padx=10, pady=(5, 10))
 
         self.lbl_status = ctk.CTkLabel(self, text="", font=FL, text_color="#80cbc4")
-        self.lbl_status.grid(row=1, column=0, columnspan=2, sticky="w", padx=20, pady=(0,8))
-
-    # ── Кровельный пирог ────────────────────────────────
-
-    def _update_roof_label(self):
-        total = sum(ROOF_MATERIALS[m]*v.get() for m, v in self._roof_vars.items())
-        self.lbl_roof_sum.configure(text=f"Qкровля = {total:.2f} кН/м²")
-
-    def _get_Q_roof(self) -> float:
-        return sum(ROOF_MATERIALS[m]*v.get() for m, v in self._roof_vars.items())
+        self.lbl_status.grid(row=1, column=0, columnspan=2, sticky="w",
+                              padx=20, pady=(0, 8))
 
     # ── Управление пролётами ─────────────────────────────
 
@@ -917,30 +1018,17 @@ class App(ctk.CTk):
         sf.pack_forget()
         sf.destroy()
         for i, f in enumerate(self._span_frames):
-            f.update_title(i+1)
+            f.update_title(i + 1)
 
     # ── Параметры ────────────────────────────────────────
 
     def _read_global_params(self) -> dict:
-        Q_roof = self._get_Q_roof()
-        if Q_roof == 0.0:
-            # Если пирог не выбран — читаем старый стиль как 0 (предупредим)
-            pass
         return {
-            "L_build":       self.e_L_build.get_float(120),
-            "B_step":        self.e_B_step.get_float(6),
-            "col_step":      int(self.v_col_step.get()),
-            "h_rail":        self.e_h_rail.get_float(8),
-            "H_col_override":self.e_h_col_ov.get_float(0),
-            "Q_snow":        self.e_Q_snow.get_float(2.1),
-            "Q_dust":        self.e_Q_dust.get_float(0),
-            "Q_tech":        self.e_Q_tech.get_float(0),
-            "Q_roof":        Q_roof,
-            "Q_purlin":      self.e_Q_purlin.get_float(0.35),
-            "yc":            self.e_yc.get_float(1.0),
-            "rig_load":      self.e_rig_load.get_float(0),
-            "has_post":      self.v_has_post.get(),
-            "bld_type":      self.v_bld_type.get(),
+            "L_build": self.e_L_build.get_float(120),
+            "Q_snow":  self.e_Q_snow.get_float(2.1),
+            "Q_dust":  self.e_Q_dust.get_float(0.0),
+            "Q_tech":  self.e_Q_tech.get_float(0.0),
+            "yc":      self.e_yc.get_float(1.0),
         }
 
     # ── Действия ─────────────────────────────────────────
@@ -954,11 +1042,6 @@ class App(ctk.CTk):
             if not spans:
                 messagebox.showwarning("Нет пролётов", "Добавьте хотя бы один пролёт.")
                 return
-            if gp["Q_roof"] == 0.0:
-                if not messagebox.askyesno("Кровельный пирог не выбран",
-                    "Нагрузка от кровли = 0. Продолжить расчёт?"):
-                    self.lbl_status.configure(text="Отменено.", text_color="#ef9a9a")
-                    return
             res = calculate(gp, spans)
             self._show_results(gp, spans, res)
             self.lbl_status.configure(text="Расчёт завершён.", text_color="#80cbc4")
@@ -1012,23 +1095,35 @@ class App(ctk.CTk):
     # ── Вывод результатов ────────────────────────────────
 
     def _show_results(self, gp, spans, res):
-        L  = []
-        S  = "─" * 70
+        L = []
+        S = "─" * 70
 
         def h(t):  L.append(f"\n{S}\n  {t}\n{S}")
         def rw(lbl, *vs): L.append(f"  {lbl:<44}  {'  '.join(str(v) for v in vs)}")
         def r2(lbl, m1, m2): L.append(f"  {lbl:<44}  М1: {str(m1):<14}  М2: {m2}")
 
         it = res["итого"]
+        kl = res["колонны"]
 
         L.append("=" * 70)
-        L.append("  МЕТАЛЛОЁМКОСТЬ ПРОИЗВОДСТВЕННОГО ЗДАНИЯ  v2.0")
+        L.append("  МЕТАЛЛОЁМКОСТЬ ПРОИЗВОДСТВЕННОГО ЗДАНИЯ  v3.0")
         L.append("=" * 70)
-        L.append(f"  Пролётов: {len(spans)}  |  L_стр={gp['L_build']}м  |  Шаг ферм={gp['B_step']}м  |  Шаг кол.={gp['col_step']}м")
-        L.append(f"  УГР={gp['h_rail']}м  |  H_кол={res['колонны']['H_full_м']}м  |  Q_кровля={gp['Q_roof']:.2f} кН/м²")
+        L.append(f"  Пролётов: {len(spans)}  |  L_стр={gp['L_build']}м")
+        L.append(f"  Снег={gp['Q_snow']} кН/м²  |  Пыль={gp['Q_dust']} кН/м²  |  Технол.={gp['Q_tech']} кН/м²  |  γc={gp['yc']}")
         for i, sp in enumerate(spans):
             mf = CRANE_MODE_FACTOR[sp["crane_mode"]]
-            L.append(f"  Пролёт {i+1}: L={sp['L_span']}м  Кран {sp['q_crane_t']}т×{sp['n_cranes']}  {sp['crane_mode']}(×{mf})  Ферма: {sp['truss_type']}")
+            h_info = kl["высоты_пролётов"][i] if i < len(kl["высоты_пролётов"]) else {}
+            L.append(
+                f"  Пролёт {i+1}: L={sp['L_span']}м  B={sp['B_step']}м  кол.шаг={sp['col_step']}м"
+                f"  УГР={sp['h_rail']}м  H_кол={h_info.get('H_full','?')}м"
+                f"  Кран {sp['q_crane_t']}т×{sp['n_cranes']}  {sp['crane_mode']}(×{mf})"
+                f"  Ферма: {sp['truss_type']}"
+            )
+            L.append(
+                f"           Кровля={sp['Q_roof']} кН/м²  Прогон={sp['Q_purlin']} кН/м²"
+                f"  Ригели={sp['rig_load']} кг/м.п.  Стойка={'да' if sp['has_post'] else 'нет'}"
+                f"  Тип: {sp['bld_type']}"
+            )
         L.append("=" * 70)
 
         # ── ИТОГО (вверху) ──────────────────────────────
@@ -1058,8 +1153,11 @@ class App(ctk.CTk):
         # 3. Связи
         h("3. СВЯЗИ ПОКРЫТИЯ  [Метод 2 — таблица]")
         sv = res["связи_покрытия"]
-        rw("Расход, кг/м²:", sv["расход_кгм2"])
+        rw("Расход средний, кг/м²:", sv["расход_кгм2"])
         rw("Масса ИТОГО, т:", sv["масса_общая_т"])
+        for d in sv.get("по_пролётам", []):
+            rw(f"  Пролёт {d['пролёт']}:",
+               f"{d['расход_кгм2']} кг/м²", f"{d['масса_т']} т")
 
         # 4. Подстропильные
         h("4. ПОДСТРОПИЛЬНЫЕ ФЕРМЫ  [М1 + М2]")
@@ -1069,6 +1167,8 @@ class App(ctk.CTk):
         else:
             r2("Масса ИТОГО, т:", psf["масса_общая_т_М1"], psf["масса_общая_т_М2"])
             for d in psf.get("по_пролётам", []):
+                if d.get("G_М1_т", 0) == 0 and d.get("G_М2_т") == "н/п":
+                    continue
                 r2(f"  Пролёт {d['пролёт']}  R={d['R_кн']} кН:",
                    d["G_М1_т"], d["G_М2_т"])
 
@@ -1081,9 +1181,18 @@ class App(ctk.CTk):
 
         # 6. Колонны
         h("6. КОЛОННЫ  [Метод 1 — формула]")
-        kl = res["колонны"]
         rw("Кол-во колонн:", kl["n_колонн"])
-        rw("H_кол (полная), м:", kl["H_full_м"], f"(надкр={kl['H_upper_м']}м  подкр={kl['H_lower_м']}м)")
+        # Показать высоты по пролётам
+        hts = kl.get("высоты_пролётов", [])
+        if len(hts) == 1:
+            rw("H_кол (полная), м:",
+               hts[0]["H_full"],
+               f"(надкр={hts[0]['H_upper']}м  подкр={hts[0]['H_lower']}м)")
+        else:
+            for ht in hts:
+                rw(f"  Пролёт {ht['пролёт']} H_кол, м:",
+                   ht["H_full"],
+                   f"(надкр={ht['H_upper']}м  подкр={ht['H_lower']}м)")
         rw("Расход, кг/м²:", kl["расход_кгм2"])
         rw("Масса ИТОГО, т:", kl["масса_общая_т"])
         for d in kl["по_рядам"]:
@@ -1092,12 +1201,17 @@ class App(ctk.CTk):
         # 7. Фахверк
         h("7. ФАХВЕРК  [Метод 2 — таблица]")
         fh = res["фахверк"]
-        if "ошибка" in fh:
+        if "ошибка" in fh and fh["масса_общая_т"] == 0:
             L.append(f"  Ошибка: {fh['ошибка']}")
         else:
-            rw("Расход, кг/м² стен:", fh.get("расход_кгм2_стены","н/п"))
-            rw("Площадь стен, м²:",   fh.get("площадь_стен_м2","н/п"))
-            rw("Масса ИТОГО, т:",     fh.get("масса_общая_т","н/п"))
+            rw("Расход, кг/м² стен:", fh.get("расход_кгм2_стены", "н/п"))
+            rw("Площадь стен, м²:",   fh.get("площадь_стен_м2", "н/п"))
+            rw("Масса ИТОГО, т:",     fh.get("масса_общая_т", "н/п"))
+            for d in fh.get("по_пролётам", []):
+                if "ошибка" in d:
+                    L.append(f"  Пролёт {d['пролёт']}: {d['ошибка']}")
+                else:
+                    rw(f"  Пролёт {d['пролёт']}:", f"{d['расход_кгм2_стены']} кг/м²", f"{d['масса_т']} т")
 
         # 8. Ограждение
         h("8. ОГРАЖДАЮЩИЕ КОНСТРУКЦИИ (справочно)")
@@ -1108,8 +1222,11 @@ class App(ctk.CTk):
         # 9. Опоры
         h("9. ОПОРЫ ТРУБОПРОВОДОВ  [Метод 2]")
         op = res["опоры_трубопроводов"]
-        rw("Расход, кг/м²:", op["расход_кгм2"])
+        rw("Расход средний, кг/м²:", op["расход_кгм2"])
         rw("Масса ИТОГО, т:", op["масса_общая_т"])
+        for d in op.get("по_пролётам", []):
+            rw(f"  Пролёт {d['пролёт']}  ({spans[d['пролёт']-1]['bld_type']}):",
+               f"{d['расход_кгм2']} кг/м²", f"{d['масса_т']} т")
 
         # Итого (повтор внизу)
         L.append(f"\n{'='*70}")
