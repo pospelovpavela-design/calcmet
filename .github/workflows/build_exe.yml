@@ -25,7 +25,7 @@ jobs:
     - name: Install dependencies
       run: |
         pip install --upgrade pip
-        pip install customtkinter pyinstaller
+        pip install -r requirements.txt pyinstaller
 
     # ── 4. Сборка единого EXE ─────────────────────────────
     - name: Build MetalCalcSuite.exe
