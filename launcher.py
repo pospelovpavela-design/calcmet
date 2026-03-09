@@ -37,11 +37,10 @@ class MetalPanel(ctk.CTkToplevel):
     _build_ui           = _MetalApp._build_ui
     _add_span           = _MetalApp._add_span
     _remove_span        = _MetalApp._remove_span
-    _update_roof_label  = _MetalApp._update_roof_label
-    _get_Q_roof         = _MetalApp._get_Q_roof
     _read_global_params = _MetalApp._read_global_params
     _on_calculate       = _MetalApp._on_calculate
     _on_clear           = _MetalApp._on_clear
+    _save_results       = _MetalApp._save_results
     _set_txt            = _MetalApp._set_txt
     _show_results       = _MetalApp._show_results
 
