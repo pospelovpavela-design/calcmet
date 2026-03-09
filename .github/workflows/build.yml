@@ -1,0 +1,43 @@
+name: Build EXE and DMG
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller --noconfirm --name Metalloemkost --windowed --onefile --hidden-import pandas --hidden-import openpyxl --hidden-import docx --hidden-import customtkinter --hidden-import PIL --collect-all customtkinter --collect-all darkdetect main.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Metalloemkost-Windows-exe
+          path: dist/Metalloemkost.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pyinstaller
+      - run: |
+          export PYINSTALLER_CONFIG_DIR="$(pwd)/.pyinstaller"
+          mkdir -p .pyinstaller
+          pyinstaller --noconfirm --workpath build --specpath . --distpath dist --name Metalloemkost --windowed --onedir --hidden-import pandas --hidden-import openpyxl --hidden-import docx --hidden-import customtkinter --hidden-import PIL --collect-all customtkinter --collect-all darkdetect main.py
+      - run: |
+          mkdir -p dist/dmg_source
+          cp -R dist/Metalloemkost.app dist/dmg_source/
+          cd dist/dmg_source
+          hdiutil create -volname "Металлоемкость" -srcfolder . -ov -format UDZO "../Металлоемкость.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Metalloemkost-macOS-dmg
+          path: dist/Металлоемкость.dmg
