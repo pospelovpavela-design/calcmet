@@ -179,11 +179,22 @@ ROOF_PRESETS = {
     ],
 }
 
-# ── П.4: Коэффициент режима работы кранов ─────────────────
-CRANE_MODE_FACTOR = {
-    "Режим 1-6К":  1.00,   # лёгкий/средний режим
-    "Режим 7-8К":  1.15,   # тяжёлый режим, доп. нагрузка +15%
+# ── П.4: Коэффициенты режима работы кранов ────────────────
+# М1 — аналитическая формула, калибрована под режим 1-6К:
+#   1-6К → ×1.00 (база), 7-8К → ×1.15 (тяжёлый +15 %)
+CRANE_MODE_FACTOR_M1 = {
+    "Режим 1-6К":  1.00,
+    "Режим 7-8К":  1.15,
 }
+# М2 — таблицы CRANE_BEAM_T1/T2 и BRAKE составлены под режим 7-8К:
+#   7-8К → ×1.15 (проверено, совпадает с методикой),
+#   1-6К → ×0.65 (снижение ~43 % относительно 7-8К, методика разд. 5.2)
+CRANE_MODE_FACTOR_M2 = {
+    "Режим 1-6К":  0.65,
+    "Режим 7-8К":  1.15,
+}
+# Для UI (список режимов в комбобоксе)
+CRANE_MODE_FACTOR = CRANE_MODE_FACTOR_M1
 
 # ─────────────────────────────────────────────────────────
 #  ПОДСКАЗКИ ДЛЯ ПОЛЕЙ ВВОДА
@@ -499,20 +510,24 @@ def calculate(gp: dict, spans: list) -> dict:
 
     def _pb_row(sp_obj, is_edge, label):
         nonlocal G_pb_m1, G_pb_m2
-        q  = sp_obj["q_crane_t"]
-        nc = sp_obj["n_cranes"]
-        wp = sp_obj["with_pass"]
-        mf = CRANE_MODE_FACTOR[sp_obj["crane_mode"]]
+        q      = sp_obj["q_crane_t"]
+        nc     = sp_obj["n_cranes"]
+        wp     = sp_obj["with_pass"]
+        mode   = sp_obj["crane_mode"]
+        mf_m1  = CRANE_MODE_FACTOR_M1[mode]   # для М1: 1-6К=1.00 / 7-8К=1.15
+        mf_m2  = CRANE_MODE_FACTOR_M2[mode]   # для М2: 1-6К=0.65 / 7-8К=1.15
         L_pb_loc = float(sp_obj["col_step"])
         n_bays_a = math.ceil(L_build / L_pb_loc)
         alp = _lkp(CRANE_BEAM_ALPHA, q)
         qr  = _lkp(RAIL_WEIGHT_KN, q)
-        G1t = (alp * L_pb_loc + qr) * L_pb_loc * 1.4 / 9.81
+        # М1: аналитическая формула × коэффициент режима
+        G1t = (alp * L_pb_loc + qr) * L_pb_loc * 1.4 / 9.81 * mf_m1
         G_pb_m1 += G1t * n_bays_a
+        # М2: табличные значения × коэффициент режима
         pb_kgm = get_crane_beam_kgm(q, L_pb_loc, nc)
         br_kgm = get_brake_kgm(q, L_pb_loc, nc, wp, is_edge)
         if pb_kgm and br_kgm is not None:
-            G_pb_m2 += (pb_kgm * mf + br_kgm * mf) * L_pb_loc * n_bays_a / 1000
+            G_pb_m2 += (pb_kgm + br_kgm) * mf_m2 * L_pb_loc * n_bays_a / 1000
         pb_rows.append({"ряд": label, "G_М1_т": round(G1t * n_bays_a, 2), "q": q})
 
     # Крайний левый (пролёт 0)
