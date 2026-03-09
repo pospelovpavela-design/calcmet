@@ -111,19 +111,67 @@ BRAKE_T2 = {
 }
 
 # ── П.2: Кровельный пирог ─────────────────────────────────
-# Удельный вес слоёв кровли (кН/м²) — заглушки, уточнить цифры
+# Удельный вес слоёв кровли, кН/м² (нормативные значения)
 ROOF_MATERIALS = {
-    "Профнастил Н-75 (t=0.8мм)":           0.10,
-    "Профнастил Н-60 (t=0.7мм)":           0.08,
-    "Профнастил НС-35 (t=0.7мм)":          0.06,
-    "Утеплитель минвата 200мм":             0.05,
-    "Утеплитель минвата 150мм":             0.04,
-    "Утеплитель PIR 150мм":                 0.03,
-    "Пароизоляция (плёнка)":                0.01,
-    "Гидроизол. мембрана однослойная":      0.02,
-    "Битумный ковёр 2 слоя (рубероид)":    0.06,
-    "Стяжка цементная 30мм":                0.60,
-    "Сэндвич-панель кровельная 200мм":      0.15,
+    # ── Несущий настил ──────────────────────────────────────
+    "Профнастил Н-75 (t=0.7мм)":            0.078,
+    "Профнастил Н-75 (t=0.8мм)":            0.089,
+    "Профнастил Н-60 (t=0.7мм)":            0.075,
+    "Профнастил НС-35 (t=0.7мм)":           0.070,
+    "Профнастил НС-35 (t=0.5мм)":           0.050,
+    # ── Утеплитель минеральная вата (ρ=80 кг/м³) ────────────
+    "Минвата 50мм  (ρ=80 кг/м³)":           0.039,
+    "Минвата 100мм (ρ=80 кг/м³)":           0.078,
+    "Минвата 150мм (ρ=80 кг/м³)":           0.118,
+    "Минвата 200мм (ρ=80 кг/м³)":           0.157,
+    # ── Утеплитель PIR (ρ=35 кг/м³) ────────────────────────
+    "PIR-плита 80мм  (ρ=35 кг/м³)":         0.027,
+    "PIR-плита 100мм (ρ=35 кг/м³)":         0.034,
+    "PIR-плита 150мм (ρ=35 кг/м³)":         0.051,
+    "PIR-плита 200мм (ρ=35 кг/м³)":         0.069,
+    # ── Утеплитель пенополистирол (ρ=25 кг/м³) ─────────────
+    "Пенополистирол 100мм (ρ=25 кг/м³)":    0.025,
+    "Пенополистирол 150мм (ρ=25 кг/м³)":    0.037,
+    "Пенополистирол 200мм (ρ=25 кг/м³)":    0.049,
+    # ── Пароизоляция ────────────────────────────────────────
+    "Пароизоляция п/э плёнка 200мкм":       0.003,
+    "Пароизоляция фольгированная":           0.010,
+    "Пароизоляция битумная (1 слой)":        0.025,
+    # ── Гидроизоляция ───────────────────────────────────────
+    "Мембрана ПВХ 1.5мм":                   0.018,
+    "Мембрана ТПО 1.5мм":                   0.018,
+    "Мембрана ЭПДМ 1.5мм":                  0.016,
+    "Битумный ковёр 2 слоя (рубероид)":     0.049,
+    "Наплавляемая кровля 2 слоя (СБС)":     0.070,
+    # ── Готовые системы ─────────────────────────────────────
+    "Сэндвич-панель кровельная 150мм":       0.130,
+    "Сэндвич-панель кровельная 200мм":       0.167,
+    # ── Прочие слои ─────────────────────────────────────────
+    "Стяжка цементная 20мм":                 0.420,
+    "Стяжка цементная 30мм":                 0.630,
+    "Доборные элементы (конёк, карниз)":     0.020,
+}
+
+# Предустановленные типовые пироги кровли (имя → список материалов)
+ROOF_PRESETS = {
+    "Унипрофиль (проф. + минвата 150 + ПВХ)": [
+        "Профнастил Н-75 (t=0.8мм)",
+        "Минвата 150мм (ρ=80 кг/м³)",
+        "Пароизоляция п/э плёнка 200мкм",
+        "Мембрана ПВХ 1.5мм",
+    ],
+    "Сэндвич-панель 200мм (готовая кровля)": [
+        "Сэндвич-панель кровельная 200мм",
+    ],
+    "Утеплённая PIR 150 + наплавляемая": [
+        "Профнастил Н-75 (t=0.8мм)",
+        "PIR-плита 150мм (ρ=35 кг/м³)",
+        "Пароизоляция битумная (1 слой)",
+        "Наплавляемая кровля 2 слоя (СБС)",
+    ],
+    "Холодная кровля (профнастил)": [
+        "Профнастил Н-75 (t=0.8мм)",
+    ],
 }
 
 # ── П.4: Коэффициент режима работы кранов ─────────────────
@@ -737,6 +785,154 @@ class FloatEntry(ctk.CTkEntry):
         except: return default
 
 
+class RoofPieWidget(ctk.CTkFrame):
+    """Конструктор кровельного пирога: выбор слоёв → авторасчёт нагрузки кН/м²."""
+
+    def __init__(self, parent, **kw):
+        super().__init__(parent, fg_color="transparent", **kw)
+        self._items: list[dict] = []   # {"name": str, "weight": float, "frame": CTkFrame}
+        self._build()
+
+    def _build(self):
+        self.columnconfigure(0, weight=1)
+
+        # ── Заголовок + переключатель режима ──────────────────
+        hdr = ctk.CTkFrame(self, fg_color="transparent")
+        hdr.grid(row=0, column=0, sticky="ew")
+        hdr.columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(hdr, text="Кровельный пирог", font=FT,
+                     text_color="#4fc3f7", anchor="w").grid(
+            row=0, column=0, sticky="w")
+
+        self._manual_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(hdr, text="ввести нагрузку вручную", font=FH,
+                        variable=self._manual_var,
+                        command=self._toggle).grid(row=0, column=1, sticky="e")
+
+        # ── Сборщик пирога ─────────────────────────────────────
+        self._pie_fr = ctk.CTkFrame(self, fg_color="#131c27", corner_radius=6)
+        self._pie_fr.grid(row=1, column=0, sticky="ew", pady=(3, 0))
+        self._pie_fr.columnconfigure(0, weight=1)
+
+        # Пресеты
+        preset_row = ctk.CTkFrame(self._pie_fr, fg_color="transparent")
+        preset_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
+        preset_row.columnconfigure(1, weight=1)
+        ctk.CTkLabel(preset_row, text="Пресет:", font=FH,
+                     text_color="#90a4ae").grid(row=0, column=0, padx=(0, 4))
+        self._preset_var = ctk.StringVar(value=list(ROOF_PRESETS.keys())[0])
+        preset_cmb = ctk.CTkComboBox(preset_row, values=list(ROOF_PRESETS.keys()),
+                                     variable=self._preset_var, width=280)
+        preset_cmb.grid(row=0, column=1, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(preset_row, text="Применить", font=FH, width=90, height=26,
+                      fg_color="#37474f", hover_color="#263238",
+                      command=self._apply_preset).grid(row=0, column=2)
+
+        # Добавление отдельного слоя
+        add_row = ctk.CTkFrame(self._pie_fr, fg_color="transparent")
+        add_row.grid(row=1, column=0, sticky="ew", padx=6, pady=(2, 4))
+        add_row.columnconfigure(0, weight=1)
+        self._layer_var = ctk.StringVar(value=list(ROOF_MATERIALS.keys())[0])
+        ctk.CTkComboBox(add_row, values=list(ROOF_MATERIALS.keys()),
+                        variable=self._layer_var, width=280).grid(
+            row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(add_row, text="＋ Добавить слой", font=FH, width=130, height=26,
+                      fg_color="#1565c0", hover_color="#0d47a1",
+                      command=self._add).grid(row=0, column=1)
+
+        # Список выбранных слоёв
+        self._list_fr = ctk.CTkFrame(self._pie_fr, fg_color="transparent")
+        self._list_fr.grid(row=2, column=0, sticky="ew", padx=6)
+        self._list_fr.columnconfigure(0, weight=1)
+
+        # Итого
+        self._total_lbl = ctk.CTkLabel(
+            self._pie_fr, text="Итого: 0.000 кН/м²",
+            font=FT, text_color="#80cbc4", anchor="w")
+        self._total_lbl.grid(row=3, column=0, sticky="w", padx=8, pady=(2, 6))
+
+        # ── Ручной ввод (скрыт по умолчанию) ──────────────────
+        self._manual_fr = ctk.CTkFrame(self, fg_color="transparent")
+        self._manual_fr.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+        ctk.CTkLabel(self._manual_fr, text="Нагрузка кровли, кН/м²",
+                     font=FL, anchor="w").pack(side="left", padx=(0, 6))
+        self._manual_e = FloatEntry(self._manual_fr, width=100)
+        self._manual_e.insert(0, "0.30")
+        self._manual_e.pack(side="left")
+        self._manual_fr.grid_remove()
+
+        # Загрузить первый пресет по умолчанию
+        self._apply_preset()
+
+    # ── Внутренние методы ──────────────────────────────────────
+
+    def _apply_preset(self):
+        """Очистить список и загрузить выбранный пресет."""
+        for it in self._items:
+            it["frame"].destroy()
+        self._items.clear()
+        preset_name = self._preset_var.get()
+        for mat in ROOF_PRESETS.get(preset_name, []):
+            if mat in ROOF_MATERIALS:
+                self._add_item(mat)
+
+    def _add(self):
+        name = self._layer_var.get()
+        if name in ROOF_MATERIALS:
+            self._add_item(name)
+
+    def _add_item(self, name: str):
+        weight = ROOF_MATERIALS[name]
+        fr = ctk.CTkFrame(self._list_fr, fg_color="#1e2d40", corner_radius=4)
+        fr.columnconfigure(0, weight=1)
+        fr.grid(row=len(self._items), column=0, sticky="ew", pady=1)
+
+        ctk.CTkLabel(fr, text=name, font=FH, anchor="w",
+                     text_color="#cfd8dc").grid(row=0, column=0, sticky="w", padx=6, pady=2)
+        ctk.CTkLabel(fr, text=f"{weight:.3f}", font=FH,
+                     text_color="#90caf9").grid(row=0, column=1, padx=4, pady=2)
+        ctk.CTkLabel(fr, text="кН/м²", font=FH,
+                     text_color="#607d8b").grid(row=0, column=2, padx=(0, 2), pady=2)
+        ctk.CTkButton(fr, text="✕", width=26, height=22, font=FH,
+                      fg_color="#b71c1c", hover_color="#7f0000",
+                      command=lambda f=fr: self._remove(f)
+                      ).grid(row=0, column=3, padx=(2, 4), pady=2)
+
+        self._items.append({"name": name, "weight": weight, "frame": fr})
+        self._update_total()
+
+    def _remove(self, frame: ctk.CTkFrame):
+        self._items = [it for it in self._items if it["frame"] is not frame]
+        frame.grid_forget()
+        frame.destroy()
+        for i, it in enumerate(self._items):
+            it["frame"].grid(row=i, column=0, sticky="ew", pady=1)
+        self._update_total()
+
+    def _update_total(self):
+        total = sum(it["weight"] for it in self._items)
+        self._total_lbl.configure(text=f"Итого: {total:.3f} кН/м²")
+
+    def _toggle(self):
+        if self._manual_var.get():
+            # Подставить текущий итог в поле ручного ввода
+            total = sum(it["weight"] for it in self._items)
+            self._manual_e.delete(0, "end")
+            self._manual_e.insert(0, f"{total:.3f}")
+            self._pie_fr.grid_remove()
+            self._manual_fr.grid()
+        else:
+            self._pie_fr.grid()
+            self._manual_fr.grid_remove()
+
+    def get_total(self) -> float:
+        if self._manual_var.get():
+            return self._manual_e.get_float(0.30)
+        total = sum(it["weight"] for it in self._items)
+        return total if total > 0 else 0.01
+
+
 class SpanFrame(ctk.CTkFrame):
     """Карточка одного пролёта — все per-span параметры."""
 
@@ -834,8 +1030,11 @@ class SpanFrame(ctk.CTkFrame):
 
         # ── Кровля и прогоны ───────────────────────────
         sec("Кровля и прогоны")
-        self.e_roof = fe("Нагрузка кровли, кН/м²",  0.30, 'Q_roof')
-        self.e_pur  = fe("Вес прогонов, кН/м²",     0.35, 'Q_purlin')
+        self.roof_pie = RoofPieWidget(body)
+        self.roof_pie.grid(row=self._row, column=0, columnspan=3,
+                           sticky="ew", padx=PAD["padx"], pady=(2, 4))
+        self._row += 1
+        self.e_pur = fe("Вес прогонов, кН/м²", 0.35, 'Q_purlin')
 
         # ── Кран ───────────────────────────────────────
         sec("Кран")
@@ -873,7 +1072,7 @@ class SpanFrame(ctk.CTkFrame):
             "col_step":   float(self.v_col.get()),
             "h_rail":     self.e_rail.get_float(10.0),
             "H_col_ov":   self.e_hov.get_float(0),
-            "Q_roof":     self.e_roof.get_float(0.30),
+            "Q_roof":     self.roof_pie.get_total(),
             "Q_purlin":   self.e_pur.get_float(0.35),
             "truss_type": self.v_tt.get(),
             "q_crane_t":  self.e_q.get_float(50),
