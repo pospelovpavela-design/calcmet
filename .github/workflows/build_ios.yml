@@ -1,0 +1,163 @@
+name: Build iOS (MetalCalc)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 150
+
+    steps:
+    # ── 1. Код ────────────────────────────────────────────
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # ── 2. Python 3.11 ────────────────────────────────────
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    # ── 3. kivy-ios toolchain ─────────────────────────────
+    - name: Install kivy-ios
+      run: pip install kivy-ios
+
+    # ── 4. Кэш скомпилированных фреймворков ───────────────
+    #    Первая сборка: ~60 мин. Повторные: секунды.
+    - name: Cache kivy-ios dist
+      id: cache-kivy
+      uses: actions/cache@v4
+      with:
+        path: ~/kivy-ios-workspace/dist
+        key: kivy-ios-dist-${{ runner.os }}-kivy231-v2
+
+    # ── 5. Собрать Kivy для iOS (если нет кэша) ───────────
+    - name: Build Kivy for iOS
+      if: steps.cache-kivy.outputs.cache-hit != 'true'
+      working-directory: ${{ runner.temp }}
+      run: |
+        mkdir -p ~/kivy-ios-workspace
+        cd ~/kivy-ios-workspace
+        toolchain build python3 kivy
+
+    # ── 6. Создать Xcode-проект ───────────────────────────
+    - name: Create Xcode project
+      run: |
+        cd ~/kivy-ios-workspace
+        toolchain create MetalCalc $GITHUB_WORKSPACE
+
+    # ── 7. Сборка для симулятора (без подписи) ────────────
+    - name: Build for iOS Simulator
+      run: |
+        xcodebuild \
+          -project ~/kivy-ios-workspace/MetalCalc-ios/MetalCalc.xcodeproj \
+          -scheme MetalCalc \
+          -sdk iphonesimulator \
+          -configuration Release \
+          -derivedDataPath DerivedData \
+          CODE_SIGNING_ALLOWED=NO \
+          | xcpretty || true
+
+    - name: Zip simulator .app
+      run: |
+        cd DerivedData/Build/Products/Release-iphonesimulator
+        zip -r MetalCalc-Simulator.zip MetalCalc.app
+
+    - name: Upload Simulator build
+      uses: actions/upload-artifact@v4
+      with:
+        name: MetalCalc-iOS-Simulator
+        path: DerivedData/Build/Products/Release-iphonesimulator/MetalCalc-Simulator.zip
+        if-no-files-found: error
+
+    # ── 8. Показать лог при ошибке ────────────────────────
+    - name: Show error details
+      if: failure()
+      run: |
+        ls -la ~/kivy-ios-workspace/ 2>/dev/null || echo "workspace not found"
+        ls -la ~/kivy-ios-workspace/MetalCalc-ios/ 2>/dev/null || echo "project not found"
+
+    # ══════════════════════════════════════════════════════
+    # ПОДПИСАННАЯ СБОРКА — только если заданы секреты Apple
+    # Секреты нужно добавить в GitHub → Settings → Secrets:
+    #   APPLE_CERTIFICATE          — base64-кодированный .p12
+    #   APPLE_CERTIFICATE_PASSWORD — пароль к .p12
+    #   APPLE_PROVISIONING_PROFILE — base64-кодированный .mobileprovision
+    #   APPLE_TEAM_ID              — Developer Team ID (10 символов)
+    # ══════════════════════════════════════════════════════
+
+    - name: Install signing certificate
+      if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      env:
+        APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      run: |
+        echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+        security create-keychain -p "" build.keychain
+        security default-keychain -s build.keychain
+        security unlock-keychain -p "" build.keychain
+        security import certificate.p12 \
+          -k build.keychain \
+          -P "$APPLE_CERTIFICATE_PASSWORD" \
+          -T /usr/bin/codesign
+        security set-key-partition-list \
+          -S apple-tool:,apple: -s -k "" build.keychain
+
+    - name: Install provisioning profile
+      if: ${{ secrets.APPLE_PROVISIONING_PROFILE != '' }}
+      env:
+        APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+      run: |
+        echo "$APPLE_PROVISIONING_PROFILE" | base64 --decode > profile.mobileprovision
+        mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+        cp profile.mobileprovision \
+          ~/Library/MobileDevice/Provisioning\ Profiles/
+
+    - name: Build signed IPA (device / TestFlight)
+      if: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_PROVISIONING_PROFILE != '' }}
+      env:
+        APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      run: |
+        xcodebuild \
+          -project ~/kivy-ios-workspace/MetalCalc-ios/MetalCalc.xcodeproj \
+          -scheme MetalCalc \
+          -sdk iphoneos \
+          -configuration Release \
+          -archivePath MetalCalc.xcarchive \
+          DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+          archive | xcpretty || true
+
+        cat > ExportOptions.plist << 'PLIST'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>method</key>
+          <string>ad-hoc</string>
+          <key>teamID</key>
+          <string>$(APPLE_TEAM_ID)</string>
+          <key>compileBitcode</key>
+          <false/>
+        </dict>
+        </plist>
+        PLIST
+
+        sed -i '' "s/\$(APPLE_TEAM_ID)/$APPLE_TEAM_ID/g" ExportOptions.plist
+
+        xcodebuild -exportArchive \
+          -archivePath MetalCalc.xcarchive \
+          -exportPath MetalCalcIPA \
+          -exportOptionsPlist ExportOptions.plist \
+          | xcpretty || true
+
+    - name: Upload signed IPA
+      if: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_PROVISIONING_PROFILE != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: MetalCalc-iOS-IPA
+        path: MetalCalcIPA/*.ipa
+        if-no-files-found: warn
