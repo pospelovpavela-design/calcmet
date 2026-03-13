@@ -44,8 +44,9 @@ BEAM_HEIGHT_RATIO = {
     160:(1/6,1/7), 200:(1/6,1/7),
 }
 CRANE_Q_EQUIV = {
-    5:8, 10:12, 20:20, 32:28, 50:38, 80:55,
-    100:68, 125:80, 200:105, 320:145, 400:175,
+    # kN/m вдоль подкрановой балки (скорректировано по методике ×2.5)
+    5:20, 10:30, 20:50, 32:70, 50:95, 80:138,
+    100:170, 125:200, 200:262, 320:362, 400:437,
 }
 
 TRUSS_LOADS = [
@@ -183,17 +184,17 @@ ROOF_PRESETS = {
 
 # ── П.4: Коэффициенты режима работы кранов ────────────────
 # М1 — аналитическая формула, калибрована под режим 1-6К:
-#   1-6К → ×1.00 (база), 7-8К → ×1.15 (тяжёлый +15 %)
+#   1-6К → ×1.00 (база), 7-8К → ×1.80 (тяжёлый +80 %)
 CRANE_MODE_FACTOR_M1 = {
     "Режим 1-6К":  1.00,
-    "Режим 7-8К":  1.15,
+    "Режим 7-8К":  1.80,
 }
 # М2 — таблицы CRANE_BEAM_T1/T2 и BRAKE составлены под режим 7-8К:
-#   7-8К → ×1.15 (проверено, совпадает с методикой),
+#   7-8К → ×1.80 (тяжёлый режим),
 #   1-6К → ×0.65 (снижение ~43 % относительно 7-8К, методика разд. 5.2)
 CRANE_MODE_FACTOR_M2 = {
     "Режим 1-6К":  0.65,
-    "Режим 7-8К":  1.15,
+    "Режим 7-8К":  1.80,
 }
 # Для UI (список режимов в комбобоксе)
 CRANE_MODE_FACTOR = CRANE_MODE_FACTOR_M1
@@ -556,14 +557,14 @@ def calculate(gp: dict, spans: list) -> dict:
         Gwu = gst * H_up * (1 - aw) * cs
         Gwl = gst * H_lo * (1 - aw) * cs
         SFv = Q_load_sp * cs * L_sp / 2 + Gwu
-        Gcu = SFv * rho * pu * H_up / (kMu * 24000)
+        Gcu = SFv * rho * pu * H_up / (kMu * 240000)
         qeq = _lkp(CRANE_Q_EQUIV, q_cr)
         D   = qeq * cs * 1.1 * yc
         alp = _lkp(CRANE_BEAM_ALPHA, q_cr)
         qrr = _lkp(RAIL_WEIGHT_KN, q_cr)
         Gpb = (alp * L_pb_loc + qrr) * L_pb_loc * 1.4
         SFn = SFv + D + Gpb + Gwl + Gcu
-        Gcl = SFn * rho * pl * H_lo / (kMl * 24000)
+        Gcl = SFn * rho * pl * H_lo / (kMl * 240000)
         return (Gcu + Gcl) / 9.81 * 1000
 
     G_cols_t = 0.0
@@ -594,7 +595,7 @@ def calculate(gp: dict, spans: list) -> dict:
         Gwu = gst * H_upL * (1 - aw) * cs_mid
         Gwl = gst * H_loL * (1 - aw) * cs_mid
         SFv = (Q_load_L + Q_load_R) * cs_mid * (sL["L_span"] + sR["L_span"]) / 4 + Gwu
-        Gcu = SFv * rho * pu * H_upL / (kMu * 24000)
+        Gcu = SFv * rho * pu * H_upL / (kMu * 240000)
         qeqL = _lkp(CRANE_Q_EQUIV, sL["q_crane_t"])
         qeqR = _lkp(CRANE_Q_EQUIV, sR["q_crane_t"])
         D = (qeqL + qeqR) * cs_mid * 1.1 * yc
@@ -606,7 +607,7 @@ def calculate(gp: dict, spans: list) -> dict:
         L_pb_R = float(sR["col_step"])
         Gpb = (alpL * L_pb_L + qrL) * L_pb_L * 1.4 + (alpR * L_pb_R + qrR) * L_pb_R * 1.4
         SFn = SFv + D + Gpb + Gwl + Gcu
-        Gcl = SFn * rho * pl * H_loL / (kMl * 24000)
+        Gcl = SFn * rho * pl * H_loL / (kMl * 240000)
         Gcm_kg = (Gcu + Gcl) / 9.81 * 1000
         G_cols_t += Gcm_kg * n_col_mid / 1000
         col_rows_detail.append({
