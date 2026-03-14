@@ -134,6 +134,63 @@ PIPE_SUPPORT = {
 TRUSS_TYPES = ["Уголки", "Двутавры", "Молодечно"]
 BLD_TYPES   = list(PIPE_SUPPORT.keys())
 
+# ── Кровельный пирог ─────────────────────────────────────
+# Удельный вес слоёв кровли, кН/м² (нормативные значения)
+ROOF_MATERIALS = {
+    "Профнастил Н-75 (t=0.7мм)":           0.078,
+    "Профнастил Н-75 (t=0.8мм)":           0.089,
+    "Профнастил Н-60 (t=0.7мм)":           0.075,
+    "Профнастил НС-35 (t=0.7мм)":          0.070,
+    "Профнастил НС-35 (t=0.5мм)":          0.050,
+    "Минвата 50мм  (r=80 кг/м3)":          0.039,
+    "Минвата 100мм (r=80 кг/м3)":          0.078,
+    "Минвата 150мм (r=80 кг/м3)":          0.118,
+    "Минвата 200мм (r=80 кг/м3)":          0.157,
+    "PIR-плита 80мм  (r=35 кг/м3)":        0.027,
+    "PIR-плита 100мм (r=35 кг/м3)":        0.034,
+    "PIR-плита 150мм (r=35 кг/м3)":        0.051,
+    "PIR-плита 200мм (r=35 кг/м3)":        0.069,
+    "Пенополистирол 100мм (r=25 кг/м3)":   0.025,
+    "Пенополистирол 150мм (r=25 кг/м3)":   0.037,
+    "Пенополистирол 200мм (r=25 кг/м3)":   0.049,
+    "Пароизоляция п/э плёнка 200мкм":      0.003,
+    "Пароизоляция фольгированная":          0.010,
+    "Пароизоляция битумная (1 слой)":       0.025,
+    "Мембрана ПВХ 1.5мм":                  0.018,
+    "Мембрана ТПО 1.5мм":                  0.018,
+    "Мембрана ЭПДМ 1.5мм":                 0.016,
+    "Битумный ковёр 2 слоя (рубероид)":    0.049,
+    "Наплавляемая кровля 2 слоя (СБС)":    0.070,
+    "Сэндвич-панель кровельная 150мм":      0.130,
+    "Сэндвич-панель кровельная 200мм":      0.167,
+    "Стяжка цементная 20мм":               0.420,
+    "Стяжка цементная 30мм":               0.630,
+    "Доборные элементы (конёк, карниз)":   0.020,
+}
+
+ROOF_PRESETS = {
+    "Унипрофиль (проф.+минвата 150+ПВХ)": [
+        "Профнастил Н-75 (t=0.8мм)",
+        "Минвата 150мм (r=80 кг/м3)",
+        "Пароизоляция п/э плёнка 200мкм",
+        "Мембрана ПВХ 1.5мм",
+    ],
+    "Сэндвич-панель 200мм": [
+        "Сэндвич-панель кровельная 200мм",
+    ],
+    "Утеплённая PIR 150 + наплавляемая": [
+        "Профнастил Н-75 (t=0.8мм)",
+        "PIR-плита 150мм (r=35 кг/м3)",
+        "Пароизоляция битумная (1 слой)",
+        "Наплавляемая кровля 2 слоя (СБС)",
+    ],
+    "Холодная кровля (профнастил)": [
+        "Профнастил Н-75 (t=0.8мм)",
+    ],
+}
+_ROOF_MAT_LIST    = list(ROOF_MATERIALS.keys())
+_ROOF_PRESET_LIST = list(ROOF_PRESETS.keys())
+
 # ════════════════════════════════════════════════════════════
 #  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (desktop API)
 # ════════════════════════════════════════════════════════════
@@ -886,7 +943,74 @@ class MetalApp(App):
         f("H_col_ov",  "Высота колонны (0=авто), м", 0.0)
 
         s("Нагрузки пролёта")
-        f("Q_roof",   "Кровля, кН/м²", 0.30)
+
+        # ── Кровельный пирог ──────────────────────────────
+        s("  Кровельный пирог", "a5d6a7")
+
+        # Строка пресета
+        preset_row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(6))
+        preset_sp = Spinner(
+            text=_ROOF_PRESET_LIST[0], values=_ROOF_PRESET_LIST,
+            size_hint=(1, 1), background_color=_GRAY,
+            color=(1, 1, 1, 1), font_size=dp(12),
+        )
+        btn_apply_preset = Button(text="Пресет", size_hint_x=None, width=dp(80),
+                                  background_color=_ACCENT, font_size=dp(12))
+        preset_row.add_widget(preset_sp)
+        preset_row.add_widget(btn_apply_preset)
+        _add(preset_row)
+
+        # Строка добавления слоя
+        layer_add_row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(6))
+        layer_sp = Spinner(
+            text=_ROOF_MAT_LIST[0], values=_ROOF_MAT_LIST,
+            size_hint=(1, 1), background_color=_GRAY,
+            color=(1, 1, 1, 1), font_size=dp(11),
+        )
+        btn_add_layer = Button(text="+ Слой", size_hint_x=None, width=dp(80),
+                               background_color=(0.15, 0.5, 0.15, 1), font_size=dp(12))
+        layer_add_row.add_widget(layer_sp)
+        layer_add_row.add_widget(btn_add_layer)
+        _add(layer_add_row)
+
+        # Контейнер выбранных слоёв (авторазмер)
+        layers_box = BoxLayout(orientation="vertical", size_hint_y=None, height=0,
+                               spacing=dp(2))
+        layers_box.bind(minimum_height=layers_box.setter("height"))
+        _add(layers_box)
+
+        # Итого + Очистить
+        total_row = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(6))
+        pie_total_lbl = Label(
+            text="Итого: 0.000 кН/м²", font_size=dp(13),
+            color=(0.65, 0.88, 0.65, 1), halign="left", valign="middle",
+        )
+        pie_total_lbl.bind(size=pie_total_lbl.setter("text_size"))
+        btn_clear_pie = Button(text="Очистить", size_hint_x=None, width=dp(90),
+                               background_color=(0.5, 0.1, 0.1, 1), font_size=dp(12))
+        total_row.add_widget(pie_total_lbl)
+        total_row.add_widget(btn_clear_pie)
+        _add(total_row)
+
+        # Q_roof — TextInput, автозаполняется из пирога (можно отредактировать вручную)
+        box_qroof, ti_qroof = self._field_widget(
+            "Нагрузка кровли кН/м² (из пирога или вручную)", 0.30)
+        _add(box_qroof)
+        d["Q_roof"] = ti_qroof
+        d["_pie_layers"]   = []          # list of {"name", "weight", "row"}
+        d["_pie_layers_box"] = layers_box
+        d["_pie_total_lbl"] = pie_total_lbl
+
+        # Привязки кнопок пирога
+        btn_apply_preset.bind(
+            on_release=lambda *_, dref=d, ps=preset_sp:
+                self._pie_apply_preset(dref, ps.text))
+        btn_add_layer.bind(
+            on_release=lambda *_, dref=d, ls=layer_sp:
+                self._pie_add_layer(dref, ls.text))
+        btn_clear_pie.bind(
+            on_release=lambda *_, dref=d: self._pie_clear(dref))
+
         f("Q_purlin", "Прогоны, кН/м²", 0.25)
 
         s("Конструкция")
@@ -906,6 +1030,55 @@ class MetalApp(App):
         if hasattr(self, '_btn_container'):
             F.add_widget(self._btn_container)
             self._update_span_buttons()
+
+    # ── Кровельный пирог ─────────────────────────────────
+
+    def _pie_update_total(self, d):
+        total = sum(e["weight"] for e in d["_pie_layers"])
+        d["_pie_total_lbl"].text = f"Итого: {total:.3f} кН/м²"
+        d["Q_roof"].text = f"{total:.3f}"
+
+    def _pie_add_layer(self, d, name):
+        if name not in ROOF_MATERIALS: return
+        weight = ROOF_MATERIALS[name]
+        entry = {"name": name, "weight": weight, "row": None}
+
+        row = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(4))
+        lbl = Label(
+            text=f"{name}  {weight:.3f}", font_size=dp(11),
+            color=(0.85, 0.92, 0.95, 1), halign="left", valign="middle",
+        )
+        lbl.bind(size=lbl.setter("text_size"))
+        btn_del = Button(text="x", size_hint_x=None, width=dp(36),
+                         background_color=(0.7, 0.1, 0.1, 1), font_size=dp(14))
+        row.add_widget(lbl)
+        row.add_widget(btn_del)
+        entry["row"] = row
+
+        d["_pie_layers"].append(entry)
+        d["_pie_layers_box"].add_widget(row)
+
+        def _del(_, e=entry, dref=d):
+            if e["row"] and e["row"].parent:
+                e["row"].parent.remove_widget(e["row"])
+            if e in dref["_pie_layers"]:
+                dref["_pie_layers"].remove(e)
+            self._pie_update_total(dref)
+
+        btn_del.bind(on_release=_del)
+        self._pie_update_total(d)
+
+    def _pie_clear(self, d):
+        for e in d["_pie_layers"]:
+            if e["row"] and e["row"].parent:
+                e["row"].parent.remove_widget(e["row"])
+        d["_pie_layers"].clear()
+        self._pie_update_total(d)
+
+    def _pie_apply_preset(self, d, preset_name):
+        self._pie_clear(d)
+        for mat in ROOF_PRESETS.get(preset_name, []):
+            self._pie_add_layer(d, mat)
 
     def _remove_span_block(self):
         if len(self._span_blocks) <= 1: return
@@ -958,7 +1131,8 @@ class MetalApp(App):
                 "col_step":   cs,
                 "h_rail":     self._get_float(d.get("h_rail"),    8.0),
                 "H_col_ov":   self._get_float(d.get("H_col_ov"), 0.0),
-                "Q_roof":     self._get_float(d.get("Q_roof"),    0.30),
+                "Q_roof":        self._get_float(d.get("Q_roof"),    0.30),
+                "Q_roof_layers": [(e["name"], e["weight"]) for e in d.get("_pie_layers", [])],
                 "Q_purlin":   self._get_float(d.get("Q_purlin"),  0.25),
                 "truss_type": self._get_text(d.get("truss_type"), "Уголки"),
                 "crane_mode": self._get_text(d.get("crane_mode"), "Режим 1-6К"),
@@ -1111,6 +1285,19 @@ class MetalApp(App):
         for i, sp in enumerate(spans):
             lines_m.append(f"  [color=80cbc4]Пролёт {i+1}:[/color] L={sp['L_span']}м B={sp['B_step']}м  кран={sp['q_crane_t']}т {sp['crane_mode']}")
             lines_p.append(f"  Пролёт {i+1}: L={sp['L_span']}м B={sp['B_step']}м  кран={sp['q_crane_t']}т {sp['crane_mode']}")
+            layers = sp.get("Q_roof_layers", [])
+            if layers:
+                lines_m.append(f"    [color=a5d6a7]Кровельный пирог:[/color]")
+                lines_p.append(f"    Кровельный пирог:")
+                for name, w in layers:
+                    lines_m.append(f"      {name}: {w:.3f} кН/м²")
+                    lines_p.append(f"      {name}: {w:.3f} кН/м²")
+                pie_total = sum(w for _, w in layers)
+                lines_m.append(f"    [color=a5d6a7]  Итого пирог: {pie_total:.3f} кН/м²[/color]")
+                lines_p.append(f"      Итого пирог: {pie_total:.3f} кН/м²")
+            else:
+                lines_m.append(f"    Кровля Q_roof: {sp['Q_roof']} кН/м²")
+                lines_p.append(f"    Кровля Q_roof: {sp['Q_roof']} кН/м²")
 
         return "\n".join(lines_m), "\n".join(lines_p)
 
