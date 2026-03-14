@@ -1167,24 +1167,46 @@ class MetalApp(App):
             self.sm.current = "result"
         except Exception:
             tb = traceback.format_exc()
-            screen = self.sm.get_screen("result")
-            screen.ids.result_text.text = "[color=ff6666]ОШИБКА:[/color]\n" + tb
-            self.sm.current = "result"
+            # Escape [ ] for Kivy markup — raw brackets crash the markup parser
+            tb_safe = tb.replace("[", "[[").replace("]", "]]")
+            self._last_result_text = f"ОШИБКА РАСЧЁТА:\n\n{tb}"
+            # Write to crash log
+            try:
+                docs = os.path.expanduser("~/Documents")
+                os.makedirs(docs, exist_ok=True)
+                with open(os.path.join(docs, "metalcalc_crash.log"), "w",
+                          encoding="utf-8") as _f:
+                    _f.write(tb)
+            except Exception:
+                pass
+            try:
+                screen = self.sm.get_screen("result")
+                screen.ids.result_text.text = (
+                    "[b][color=ff6666]ОШИБКА РАСЧЁТА[/color][/b]\n\n"
+                    "[color=ffaaaa]Детали сохранены в metalcalc_crash.log[/color]\n\n"
+                    + tb_safe
+                )
+                self.sm.current = "result"
+            except Exception:
+                pass
 
     def do_save_results(self):
+        screen = self.sm.get_screen("result")
         if not self._last_result_text:
+            screen.ids.result_text.text += (
+                "\n\n[color=ffaa44]Нет данных — сначала нажмите РАССЧИТАТЬ.[/color]"
+            )
             return
         try:
             path = export_to_file(self._last_result_text)
-            screen = self.sm.get_screen("result")
             short = os.path.basename(path)
-            # Append save notification
             screen.ids.result_text.text += (
                 f"\n\n[color=88ff88]Сохранено: {short}[/color]"
             )
         except Exception as e:
-            screen = self.sm.get_screen("result")
-            screen.ids.result_text.text += f"\n\n[color=ff6666]Ошибка сохранения: {e}[/color]"
+            screen.ids.result_text.text += (
+                f"\n\n[color=ff6666]Ошибка сохранения: {e}[/color]"
+            )
 
     # ── Форматирование результатов ────────────────────────
 
