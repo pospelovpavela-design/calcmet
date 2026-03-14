@@ -384,21 +384,23 @@ class TestCraneModeFactor:
     def test_m1_16k_is_one(self):
         assert CRANE_MODE_FACTOR_M1["Режим 1-6К"] == pytest.approx(1.00)
 
-    def test_m1_78k_is_1_15(self):
-        assert CRANE_MODE_FACTOR_M1["Режим 7-8К"] == pytest.approx(1.15)
+    def test_m1_78k_is_1_80(self):
+        """7-8К скорректирован: 1.15 → 1.80 (калибровка по методике)."""
+        assert CRANE_MODE_FACTOR_M1["Режим 7-8К"] == pytest.approx(1.80)
 
-    def test_m2_78k_is_1_15(self):
-        assert CRANE_MODE_FACTOR_M2["Режим 7-8К"] == pytest.approx(1.15)
+    def test_m2_78k_is_1_80(self):
+        """7-8К скорректирован: 1.15 → 1.80 (калибровка по методике)."""
+        assert CRANE_MODE_FACTOR_M2["Режим 7-8К"] == pytest.approx(1.80)
 
     def test_m2_16k_less_than_78k(self):
         assert CRANE_MODE_FACTOR_M2["Режим 1-6К"] < CRANE_MODE_FACTOR_M2["Режим 7-8К"]
 
-    def test_m2_16k_reduction_40_to_55_percent(self):
-        """1-6К должен давать 40–55% снижения относительно 7-8К."""
+    def test_m2_16k_reduction_60_to_70_percent(self):
+        """1-6К даёт 60–70% снижения относительно 7-8К (0.65/1.80 = 63.9%)."""
         ratio = CRANE_MODE_FACTOR_M2["Режим 1-6К"] / CRANE_MODE_FACTOR_M2["Режим 7-8К"]
         reduction_pct = (1 - ratio) * 100
-        assert 40 <= reduction_pct <= 55, (
-            f"Снижение М2: {reduction_pct:.1f}% — ожидалось 40–55%"
+        assert 60 <= reduction_pct <= 70, (
+            f"Снижение М2: {reduction_pct:.1f}% — ожидалось 60–70%"
         )
 
     def test_m2_78k_same_as_m1_78k(self):
@@ -657,13 +659,13 @@ class TestCalculateCraneMode:
         pb78 = res78["подкрановые_балки"]["масса_общая_т_М1"]
         assert pb78 > pb16, "М1: 7-8К должен быть тяжелее 1-6К"
 
-    def test_m1_78k_is_15pct_more(self):
-        """М1: ровно ×1.15 при переходе с 1-6К на 7-8К."""
+    def test_m1_78k_is_80pct_more(self):
+        """М1: ровно ×1.80 при переходе с 1-6К на 7-8К (коэф. скорректирован)."""
         res16 = calculate(_gp(), [_sp(crane_mode="Режим 1-6К")])
         res78 = calculate(_gp(), [_sp(crane_mode="Режим 7-8К")])
         pb16 = res16["подкрановые_балки"]["масса_общая_т_М1"]
         pb78 = res78["подкрановые_балки"]["масса_общая_т_М1"]
-        assert pb78 / pb16 == pytest.approx(1.15, rel=0.01)
+        assert pb78 / pb16 == pytest.approx(1.80, rel=0.01)
 
     def test_m2_78k_heavier_than_16k(self):
         res16 = calculate(_gp(), [_sp(truss_type="Двутавры", crane_mode="Режим 1-6К")])
@@ -674,8 +676,8 @@ class TestCalculateCraneMode:
             pytest.skip("М2 недоступен для данных параметров")
         assert pb78 > pb16, "М2: 7-8К должен быть тяжелее 1-6К"
 
-    def test_m2_16k_reduction_40_to_55_pct(self):
-        """М2: снижение 1-6К относительно 7-8К в диапазоне 40–55%."""
+    def test_m2_16k_reduction_60_to_70_pct(self):
+        """М2: снижение 1-6К относительно 7-8К в диапазоне 60–70% (0.65/1.80=63.9%)."""
         res16 = calculate(_gp(), [_sp(truss_type="Двутавры", crane_mode="Режим 1-6К")])
         res78 = calculate(_gp(), [_sp(truss_type="Двутавры", crane_mode="Режим 7-8К")])
         pb16 = res16["подкрановые_балки"].get("масса_общая_т_М2", 0)
@@ -685,8 +687,8 @@ class TestCalculateCraneMode:
         if pb78 == 0:
             pytest.skip("М2 7-8К = 0")
         reduction = (1 - pb16 / pb78) * 100
-        assert 40 <= reduction <= 55, (
-            f"М2: снижение {reduction:.1f}% — ожидалось 40–55%"
+        assert 60 <= reduction <= 70, (
+            f"М2: снижение {reduction:.1f}% — ожидалось 60–70%"
         )
 
 
@@ -780,3 +782,143 @@ class TestCalculateColumnHeights:
         # Просто проверяем, что оба расчёта дают ненулевые результаты
         assert res20["колонны"]["масса_общая_т"] > 0
         assert res50["колонны"]["масса_общая_т"] > 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Эталонные тесты по методике
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestEtalonBlok1Purlins:
+    """Блок 1. Прогоны — эталон по PURLIN_TABLE (методика, разд. 3).
+
+    Входные данные:
+      Q_snow=1.2 кН/м² (II снеговой р-н), Q_roof=0.30, Q_purlin=0.25,
+      B_step=6 м, γn=1.0, a_пр=3.0 м (шаг прогонов).
+
+    Ручной расчёт:
+      qp = (0.30 + 0.25 + 1.20) × 3.0 × 1.0 / 9.81 = 0.535 т/м
+      PURLIN_TABLE: 0.535 > 0.45 → следующий порог 0.65 → Швеллер 22, 126.0 кг
+    """
+
+    def test_qp_exceeds_first_threshold(self):
+        """qp=0.535 т/м выходит за первый порог (0.45) — нужен Швеллер 22."""
+        mass, name = select_purlin(0.535, 6)
+        assert "22" in name, f"Ожидался Швеллер 22, получен {name}"
+
+    def test_purlin_mass_b6(self):
+        """Масса Швеллера 22 на 6 м = 126.0 кг."""
+        mass, name = select_purlin(0.535, 6)
+        assert mass == pytest.approx(126.0, rel=0.01)
+
+    def test_boundary_exact_45_returns_channel20(self):
+        """Граничное значение qp=0.45 → Швеллер 20, 110.4 кг."""
+        mass, name = select_purlin(0.45, 6)
+        assert "20" in name
+        assert mass == pytest.approx(110.4, rel=0.01)
+
+    def test_light_load_b12_returns_beam(self):
+        """При шаге B=12 м подбирается двутавр, а не швеллер."""
+        mass, name = select_purlin(0.30, 12)
+        assert "Двутавр" in name or "Б" in name
+
+
+class TestEtalonBlok2Trusses:
+    """Блок 2. Стропильные фермы — эталон из таблицы TRUSS_MASSES (методика, разд. 2).
+
+    Контрольный пример:
+      Тип = Уголки, L = 24 м, Q_tm = 4.0 т/м
+      → TRUSS_LOADS[4] = 4.0 → TRUSS_MASSES["Уголки"][24][4] = 4.29 кг/м²
+    """
+
+    def test_ugolki_24m_4tm_exact(self):
+        """Уголки, L=24м, Q_tm=4.0 т/м → 4.29 кг/м² (из таблицы методики)."""
+        mt = get_truss_mass_m2("Уголки", 24, 4.0)
+        assert mt == pytest.approx(4.29, rel=0.001)
+
+    def test_ugolki_24m_2tm_exact(self):
+        """Уголки, L=24м, Q_tm=2.0 т/м → 2.30 кг/м² (первое значение таблицы)."""
+        mt = get_truss_mass_m2("Уголки", 24, 2.0)
+        assert mt == pytest.approx(2.30, rel=0.001)
+
+    def test_ugolki_18m_lighter_than_36m(self):
+        """Пролёт 18м легче, чем 36м при одинаковой нагрузке."""
+        mt18 = get_truss_mass_m2("Уголки", 18, 4.0)
+        mt36 = get_truss_mass_m2("Уголки", 36, 4.0)
+        assert mt18 < mt36
+
+    def test_all_truss_types_return_positive(self):
+        """Все типы ферм дают положительный результат для типовых входных данных."""
+        for tt in ["Уголки", "Двутавры", "Молодечно"]:
+            mt = get_truss_mass_m2(tt, 24, 4.0)
+            assert mt is not None and mt > 0, f"{tt}: ожидался mt > 0"
+
+
+class TestEtalonBlok3CraneBeamM1:
+    """Блок 3. Подкрановые балки М1 — эталон из кода (методика, разд. 5.1).
+
+    Контрольный пример: Q_кран=100 т, L_пб=6 м, Режим 7-8К, 1 кран.
+    Формула кода: Gпб = (αпб×Lпб + Gрельс) × Lпб × 1.4 / 9.81 × mf_m1
+      = (0.26×6 + 1.135) × 6 × 1.4 / 9.81 × 1.80
+      = 4.154 т/пролёт
+
+    ПРИМЕЧАНИЕ: Формула методики (KNOWLEDGE_BASE.md разд. 3.5) отличается:
+      Gпб = αпб × Lпб × (qэкв × Lпб + Gрельс) → ~2.87 т при qэкв в кН/м.
+      Расхождение требует сверки с первоисточником (открытый вопрос #1).
+    """
+
+    def test_m1_100t_6m_78k_per_bay(self):
+        """100т, 6м, 7-8К: масса одного ряда/балки = 4.154 т/пролёт."""
+        res = calculate(
+            {"L_build": 60, "Q_snow": 2.1, "Q_dust": 0, "Q_tech": 0, "yc": 1.0},
+            [_sp(q_crane_t=100, col_step=6, crane_mode="Режим 7-8К")],
+        )
+        # L_build=60 / col_step=6 = 10 пролётов; G1t≈4.154 т × 10 = 41.54 т
+        row = res["подкрановые_балки"]["ряды_колонн"][0]
+        assert row["G_М1_т"] == pytest.approx(41.54, rel=0.02)
+
+    def test_m1_78k_heavier_than_16k_100t(self):
+        """Режим 7-8К даёт тяжелее балки, чем 1-6К (в ×1.80 раз)."""
+        res16 = calculate(
+            {"L_build": 60, "Q_snow": 2.1, "Q_dust": 0, "Q_tech": 0, "yc": 1.0},
+            [_sp(q_crane_t=100, col_step=6, crane_mode="Режим 1-6К")],
+        )
+        res78 = calculate(
+            {"L_build": 60, "Q_snow": 2.1, "Q_dust": 0, "Q_tech": 0, "yc": 1.0},
+            [_sp(q_crane_t=100, col_step=6, crane_mode="Режим 7-8К")],
+        )
+        pb16 = res16["подкрановые_балки"]["масса_общая_т_М1"]
+        pb78 = res78["подкрановые_балки"]["масса_общая_т_М1"]
+        assert pb78 / pb16 == pytest.approx(1.80, rel=0.01)
+
+
+class TestEtalonBlok4CraneBeamM2:
+    """Блок 4. Подкрановые балки М2 — эталон из таблицы CRANE_BEAM_T1 (методика, разд. 5.2).
+
+    Контрольный пример: Q_кран=20 т, L_пб=6 м, Режим 7-8К, 1 кран.
+      CRANE_BEAM_T1[6], Q=20т, 1 кран → 150 кг/м
+      × коэф. 7-8К (1.80) → 270 кг/м
+      На балку 6 м → 270 × 6 = 1620 кг
+    """
+
+    def test_crane_beam_t1_20t_6m_1crane(self):
+        """CRANE_BEAM_T1: Q=20т, L=6м, 1 кран → 150 кг/м (из таблицы методики)."""
+        kgm = get_crane_beam_kgm(20, 6, 1)
+        assert kgm == pytest.approx(150, rel=0.01)
+
+    def test_m2_with_78k_factor_270kgm(self):
+        """С коэф. 7-8К (×1.80): 150 × 1.80 = 270 кг/м."""
+        kgm = get_crane_beam_kgm(20, 6, 1)
+        factor = CRANE_MODE_FACTOR_M2["Режим 7-8К"]
+        assert kgm * factor == pytest.approx(270, rel=0.01)
+
+    def test_m2_20t_6m_beam_total_1620kg(self):
+        """Итого на 6 м балку: 270 × 6 = 1620 кг."""
+        kgm = get_crane_beam_kgm(20, 6, 1)
+        factor = CRANE_MODE_FACTOR_M2["Режим 7-8К"]
+        assert kgm * factor * 6 == pytest.approx(1620, rel=0.01)
+
+    def test_m2_2cranes_heavier_than_1crane(self):
+        """2 крана дают большую нагрузку, чем 1 кран."""
+        kgm1 = get_crane_beam_kgm(20, 6, 1)
+        kgm2 = get_crane_beam_kgm(20, 6, 2)
+        assert kgm2 > kgm1
