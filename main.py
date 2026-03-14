@@ -341,7 +341,7 @@ _DARK  = (0.13, 0.13, 0.13, 1)
 _GRAY  = (0.25, 0.25, 0.25, 1)
 
 
-class _Toolbar(BoxLayout):
+class Toolbar(BoxLayout):
     title = StringProperty("")
     back  = BooleanProperty(False)
 
@@ -353,7 +353,7 @@ ScreenManager:
     InputScreen:
     ResultScreen:
 
-<_Toolbar>:
+<Toolbar>:
     size_hint_y: None
     height: dp(50)
     canvas.before:
@@ -388,7 +388,7 @@ ScreenManager:
             Rectangle:
                 pos: self.pos
                 size: self.size
-        _Toolbar:
+        Toolbar:
             id: input_toolbar
         ScrollView:
             BoxLayout:
@@ -432,7 +432,7 @@ ScreenManager:
             Rectangle:
                 pos: self.pos
                 size: self.size
-        _Toolbar:
+        Toolbar:
             id: result_toolbar
             back: True
         ScrollView:

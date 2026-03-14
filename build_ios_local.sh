@@ -4,6 +4,24 @@
 #  Установка на iPhone через Xcode (шнурок)
 # ──────────────────────────────────────────────────────────────
 set -e
+
+# kivy-ios не поддерживает Python 3.13 — нужен Python 3.11
+CONDA_ENV="kivy-ios"
+if conda env list 2>/dev/null | grep -q "^$CONDA_ENV "; then
+    # Активируем среду внутри скрипта
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate "$CONDA_ENV"
+else
+    echo -e "\033[0;31m✗ Conda-среда '$CONDA_ENV' не найдена.\033[0m"
+    echo ""
+    echo "Создайте её один раз:"
+    echo "  conda create -n $CONDA_ENV python=3.11 -y"
+    echo "  conda activate $CONDA_ENV"
+    echo "  pip install cython kivy-ios"
+    echo ""
+    echo "Затем повторите: ./build_ios_local.sh"
+    exit 1
+fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE="$SCRIPT_DIR/kivy-ios-build"
 APP_NAME="MetalCalc"
