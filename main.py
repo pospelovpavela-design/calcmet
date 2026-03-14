@@ -862,7 +862,8 @@ class MetalApp(App):
         d = {}           # input widgets keyed by param name
         added = []       # all top-level widgets added to F for this span
 
-        F.remove_widget(self._btn_container)
+        if hasattr(self, '_btn_container'):
+            F.remove_widget(self._btn_container)
 
         def _add(w): F.add_widget(w); added.append(w); return w
         def s(t, color="4fc3f7"): _add(self._section_label(t, color))
@@ -902,8 +903,9 @@ class MetalApp(App):
 
         d["_widgets_in_F"] = added
         self._span_blocks.append(d)
-        F.add_widget(self._btn_container)
-        self._update_span_buttons()
+        if hasattr(self, '_btn_container'):
+            F.add_widget(self._btn_container)
+            self._update_span_buttons()
 
     def _remove_span_block(self):
         if len(self._span_blocks) <= 1: return
