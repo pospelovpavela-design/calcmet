@@ -31,8 +31,20 @@ PURLIN_TABLE = [
 ]
 
 CRANE_BEAM_ALPHA = {
-    5:0.08, 10:0.09, 20:0.12, 32:0.15, 50:0.18,
-    80:0.22, 100:0.26, 125:0.30, 200:0.36, 320:0.40, 400:0.45,
+    # Источник: методика ЦНИИ, разд. 5.1.
+    # Q=20–50 т: αпб = 0.24–0.35; Q=80–200 т: αпб = 0.37–0.47 (линейная интерполяция).
+    # За пределами диапазона — линейная экстраполяция.
+    5:  0.19,   # экстраполяция ниже 20 т
+    10: 0.20,   # экстраполяция ниже 20 т
+    20: 0.24,   # нижняя граница диапазона 20–50 т
+    32: 0.28,   # интерполяция 20–50 т
+    50: 0.35,   # верхняя граница диапазона 20–50 т
+    80: 0.37,   # нижняя граница диапазона 80–200 т
+    100: 0.39,  # пример из методики (Q=100/20 т → αпб=0.39)
+    125: 0.41,  # интерполяция 80–200 т
+    200: 0.47,  # верхняя граница диапазона 80–200 т
+    320: 0.57,  # экстраполяция выше 200 т
+    400: 0.64,  # экстраполяция выше 200 т
 }
 RAIL_WEIGHT_KN = {
     5:0.461, 10:0.461, 20:0.461, 32:0.598, 50:0.598,
@@ -523,8 +535,8 @@ def calculate(gp: dict, spans: list) -> dict:
         n_bays_a = math.ceil(L_build / L_pb_loc)
         alp = _lkp(CRANE_BEAM_ALPHA, q)
         qr  = _lkp(RAIL_WEIGHT_KN, q)
-        # М1: аналитическая формула × коэффициент режима
-        G1t = (alp * L_pb_loc + qr) * L_pb_loc * 1.4 / 9.81 * mf_m1
+        # М1: аналитическая формула × коэффициент режима (kпб=1.2 по методике ЦНИИ разд. 5.1)
+        G1t = (alp * L_pb_loc + qr) * L_pb_loc * 1.2 / 9.81 * mf_m1
         G_pb_m1 += G1t * n_bays_a
         # М2: табличные значения × коэффициент режима
         pb_kgm = get_crane_beam_kgm(q, L_pb_loc, nc)
@@ -562,7 +574,7 @@ def calculate(gp: dict, spans: list) -> dict:
         D   = qeq * cs * 1.1 * yc
         alp = _lkp(CRANE_BEAM_ALPHA, q_cr)
         qrr = _lkp(RAIL_WEIGHT_KN, q_cr)
-        Gpb = (alp * L_pb_loc + qrr) * L_pb_loc * 1.4
+        Gpb = (alp * L_pb_loc + qrr) * L_pb_loc * 1.2  # kпб=1.2 по методике
         SFn = SFv + D + Gpb + Gwl + Gcu
         Gcl = SFn * rho * pl * H_lo / (kMl * 240000)
         return (Gcu + Gcl) / 9.81 * 1000
@@ -605,7 +617,7 @@ def calculate(gp: dict, spans: list) -> dict:
         qrR  = _lkp(RAIL_WEIGHT_KN,  sR["q_crane_t"])
         L_pb_L = float(sL["col_step"])
         L_pb_R = float(sR["col_step"])
-        Gpb = (alpL * L_pb_L + qrL) * L_pb_L * 1.4 + (alpR * L_pb_R + qrR) * L_pb_R * 1.4
+        Gpb = (alpL * L_pb_L + qrL) * L_pb_L * 1.2 + (alpR * L_pb_R + qrR) * L_pb_R * 1.2  # kпб=1.2
         SFn = SFv + D + Gpb + Gwl + Gcu
         Gcl = SFn * rho * pl * H_loL / (kMl * 240000)
         Gcm_kg = (Gcu + Gcl) / 9.81 * 1000
