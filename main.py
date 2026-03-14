@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-Металлоёмкость производственных зданий — Android-версия на Kivy/KivyMD
-Все таблицы вшиты в код, внешние файлы не требуются.
+Металлоёмкость производственных зданий — iOS v2.0
+Многопролётный расчёт, экспорт результатов, safe-area.
+Расчётное ядро идентично desktop v3.0 (Ry=240000, CRANE_Q_EQUIV ×2.5, коэф.режима 1.80).
 """
-import os
-import sys
-import math
-import traceback
+import os, sys, math, traceback
+from datetime import datetime
 
-# ── Запись краша в файл (читать через менеджер файлов: Загрузки/metalcalc_crash.log) ──
+# ── Сохранение краша ────────────────────────────────────────
 def _save_crash(exc_type, exc_value, exc_tb):
     text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    docs = os.path.expanduser("~/Documents")
+    os.makedirs(docs, exist_ok=True)
     for path in [
-        "/sdcard/Download/metalcalc_crash.log",
-        "/storage/emulated/0/Download/metalcalc_crash.log",
+        os.path.join(docs, "metalcalc_crash.log"),
         os.path.join(os.path.expanduser("~"), "metalcalc_crash.log"),
     ]:
         try:
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
             break
         except Exception:
@@ -26,32 +26,44 @@ def _save_crash(exc_type, exc_value, exc_tb):
 
 sys.excepthook = _save_crash
 
-# ─────────────────────────────────────────────────────────
-#  HARDCODED ДАННЫЕ (Метод 1)
-# ─────────────────────────────────────────────────────────
-PURLIN_TABLE = [
-    (0.45, 110.4, 220.8,  "Швеллер 20"),
-    (0.65, 126.0, 252.0,  "Швеллер 22"),
-    (0.90, 144.0, 288.0,  "Швеллер 24"),
-    (1.25, 166.2, 332.4,  "Швеллер 27"),
-    (1.70, 190.8, 381.6,  "Швеллер 30"),
-    (2.50, 220.8, 441.6,  "2×Швеллер 20"),
-]
-CRANE_BEAM_ALPHA = {5:0.08,10:0.09,20:0.12,32:0.15,50:0.18,
-                    80:0.22,100:0.26,125:0.30,200:0.36,320:0.40,400:0.45}
-RAIL_WEIGHT_KN   = {5:0.461,10:0.461,20:0.461,32:0.598,50:0.598,
-                    80:0.831,100:1.135,125:1.135,200:1.135,320:1.417,400:1.417}
-CRANE_Q_EQUIV    = {5:8,10:12,20:20,32:28,50:38,80:55,
-                    100:68,125:80,200:105,320:145,400:175}
-BEAM_HEIGHT_RATIO = {20:(1/7,1/9),32:(1/7,1/9),50:(1/6,1/8.5),
-                     80:(1/6,1/7.5),100:(1/6,1/7),125:(1/6,1/7)}
+# ════════════════════════════════════════════════════════════
+#  ДАННЫЕ — идентичны desktop v3.0
+# ════════════════════════════════════════════════════════════
 
-# ─────────────────────────────────────────────────────────
-#  HARDCODED ТАБЛИЦЫ (Метод 2)
-# ─────────────────────────────────────────────────────────
-TRUSS_LOADS = [2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,
-               6.5,7.0,7.5,8.0,8.5,9.0,9.5,10.0,10.5,
-               11.0,11.5,12.0,12.5]
+# Таблица прогонов: (qp_max т/м, имя B=6, масса_кг B=6, имя B=12, масса_кг B=12)
+PURLIN_TABLE = [
+    (0.45, "Швеллер 20",   110.4, "Двутавр 20",  345.0),
+    (0.67, "Швеллер 22",   122.4, "Двутавр 24",  420.0),
+    (0.87, "Швеллер 24",   134.4, "Двутавр 27",  492.0),
+    (1.10, "Швеллер 27",   151.2, "Двутавр 30",  558.0),
+    (1.30, "Швеллер 30",   168.0, "Двутавр 33",  624.0),
+    (1.50, "Швеллер 33",   184.8, "Двутавр 36",  697.2),
+]
+
+CRANE_BEAM_ALPHA = {
+    5:0.08, 10:0.09, 20:0.12, 32:0.15, 50:0.18,
+    80:0.22, 100:0.26, 125:0.30, 200:0.36, 320:0.40, 400:0.45,
+}
+RAIL_WEIGHT_KN = {
+    5:0.461, 10:0.461, 20:0.461, 32:0.598, 50:0.598,
+    80:0.831, 100:1.135, 125:1.135, 200:1.135, 320:1.417, 400:1.417,
+}
+# Эквивалентная нагрузка вдоль подкрановой балки (кН/м), скорр. ×2.5
+CRANE_Q_EQUIV = {
+    5:20, 10:30, 20:50, 32:70, 50:95, 80:138,
+    100:170, 125:200, 200:262, 320:362, 400:437,
+}
+
+# Коэффициенты режима работы крана
+CRANE_MODE_FACTOR_M1 = {"Режим 1-6К": 1.00, "Режим 7-8К": 1.80}
+CRANE_MODE_FACTOR_M2 = {"Режим 1-6К": 0.65, "Режим 7-8К": 1.80}
+CRANE_MODES = list(CRANE_MODE_FACTOR_M1.keys())
+
+TRUSS_LOADS = [
+    2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,
+    6.5,7.0,7.5,8.0,8.5,9.0,9.5,10.0,10.5,
+    11.0,11.5,12.0,12.5,
+]
 TRUSS_MASSES = {
     "Уголки": {
         36:[5.90,7.54,10.37,11.12,12.30,12.74,13.30,14.74,15.66,15.66,18.89,18.89,18.89,19.30,21.50,21.50,22.52,23.70,24.57,24.57,26.30,26.92],
@@ -72,8 +84,10 @@ TRUSS_MASSES = {
         18:[1.29,1.54,1.58,2.07,2.18,2.65,3.40,3.40,3.40,3.40,4.08,4.08,4.08,4.70,4.83,4.83,5.70,6.07,6.07,6.07,6.07,7.08],
     },
 }
+
 SUBTRUSS_LOADS  = [18.0,36.0,54.0,72.0,81.0,108.0,126.0,144.0,162.0,180.0,198.0,216.0,234.0,255.0]
 SUBTRUSS_MASSES = [1.57,2.22,2.31,2.72,2.72,4.59,5.32,5.32,5.70,5.80,6.30,6.30,6.53,6.71]
+
 FAKHVERK_DATA = {
     ('I',0,0):9,  ('I',0,1):10, ('I',0,2):11,
     ('I',1,0):9,  ('I',1,1):11, ('I',1,2):11,
@@ -85,266 +99,474 @@ FAKHVERK_DATA = {
     ('III',1,0):19,('III',1,1):29,('III',1,2):46,
     ('III',2,0):20,('III',2,1):30,('III',2,2):48,
 }
-_CB_Q1=[5,10,20,32,50]; _CB_Q2=[80,100,125,200,400]
-CRANE_BEAM_T1={6:[80,85,90,190,200,100,240,250,105,140],12:[150,160,320,350,180,200,390,440,220,470]}
-CRANE_BEAM_T2={12:[290,320,380,940,980,300,330,500,350,540],18:[460,480,500,1020,1080,490,520,540,1120,1180],24:[680,720,780,1040,1120,820,920,1620,1840,880]}
-BRAKE_T1={(6,True,True):[100,110],(6,True,False):[65,70],(6,False,True):[120,140],(6,False,False):[70,75],
-          (12,True,True):[100,120],(12,True,False):[65,70],(12,False,True):[100,120],(12,False,False):[70,75]}
-BRAKE_T2={(12,True,True):[120,140],(12,True,False):[80,100],(12,False,True):[140,160],(12,False,False):[60,80],
-          (18,True,True):[120,140],(18,True,False):[80,100],(18,False,True):[140,160],(18,False,False):[80,100],
-          (24,True,True):[220,240],(24,True,False):[140,160],(24,False,True):[220,240],(24,False,False):[140,160]}
 
-# ─────────────────────────────────────────────────────────
-#  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# ─────────────────────────────────────────────────────────
-def _lookup(d, val):
+_CB_Q1 = [5,10,20,32,50]; _CB_Q2 = [80,100,125,200,400]
+CRANE_BEAM_T1 = {
+    6:  [ 80, 90, 100,120, 150,185, 210,260, 270,330],
+    12: [150,170, 190,230, 270,335, 375,455, 490,595],
+}
+CRANE_BEAM_T2 = {
+    12: [290,330, 350,400, 430,490,  620, 720,  920,1080],
+    18: [460,520, 540,615, 660,750,  950,1100, 1410,1640],
+    24: [680,770, 800,910, 980,1110,1420,1640, 2100,2450],
+}
+BRAKE_T1 = {
+    (6,True,True):[100,110],   (6,True,False):[65,70],
+    (6,False,True):[120,140],  (6,False,False):[70,75],
+    (12,True,True):[100,120],  (12,True,False):[65,70],
+    (12,False,True):[100,120], (12,False,False):[70,75],
+}
+BRAKE_T2 = {
+    (12,True,True):[120,140],  (12,True,False):[80,100],
+    (12,False,True):[140,160], (12,False,False):[60,80],
+    (18,True,True):[120,140],  (18,True,False):[80,100],
+    (18,False,True):[140,160], (18,False,False):[80,100],
+    (24,True,True):[220,240],  (24,True,False):[140,160],
+    (24,False,True):[220,240], (24,False,False):[140,160],
+}
+
+PIPE_SUPPORT = {
+    "Основные производственные": (11, 22),
+    "Здания энергоносителей":    (23, 40),
+    "Вспомогательные здания":    (2,  4),
+}
+
+TRUSS_TYPES = ["Уголки", "Двутавры", "Молодечно"]
+BLD_TYPES   = list(PIPE_SUPPORT.keys())
+
+# ════════════════════════════════════════════════════════════
+#  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (desktop API)
+# ════════════════════════════════════════════════════════════
+
+def _lkp(d, val):
     for k in sorted(d):
         if val <= k: return d[k]
     return d[sorted(d)[-1]]
-
-def select_purlin(load_tm, span_m):
-    for max_l, m6, m12, name in PURLIN_TABLE:
-        if load_tm <= max_l:
-            return (m6 if span_m <= 6 else m12), name
-    _, m6, m12, name = PURLIN_TABLE[-1]
-    return (m6 if span_m <= 6 else m12), name
-
-def interp_table(loads, masses, target):
-    for i, ld in enumerate(loads):
-        if target <= ld: return masses[i]
-    return masses[-1]
 
 def ceil_to_table(target, values):
     for v in sorted(values):
         if target <= v: return v
     return sorted(values)[-1]
 
-def get_truss_mass(truss_type, span_m, load_tm):
+def interp_table(loads, masses, target):
+    for i, ld in enumerate(loads):
+        if target <= ld: return masses[i]
+    return masses[-1]
+
+def select_purlin(load_tm, B_step):
+    for qmax, n6, m6, n12, m12 in PURLIN_TABLE:
+        if load_tm <= qmax:
+            return (m6, n6) if B_step <= 6 else (m12, n12)
+    _, n6, m6, n12, m12 = PURLIN_TABLE[-1]
+    n6 += "!"; n12 += "!"
+    return (m6, n6) if B_step <= 6 else (m12, n12)
+
+def get_truss_mass_m2(truss_type, span_m, load_tm):
     spans = sorted(TRUSS_MASSES.get(truss_type, {}).keys())
     if not spans: return None
-    span_key = ceil_to_table(span_m, spans)
-    masses = TRUSS_MASSES[truss_type].get(span_key)
+    sk = ceil_to_table(span_m, spans)
+    masses = TRUSS_MASSES[truss_type].get(sk)
     if masses is None: return None
     return interp_table(TRUSS_LOADS, masses, load_tm)
 
-def get_subtruss_mass(R_t):
-    R_ceil = ceil_to_table(R_t, SUBTRUSS_LOADS)
-    return interp_table(SUBTRUSS_LOADS, SUBTRUSS_MASSES, R_ceil)
+def get_subtruss_mass_m2(R_t):
+    return interp_table(SUBTRUSS_LOADS, SUBTRUSS_MASSES,
+                        ceil_to_table(R_t, SUBTRUSS_LOADS))
 
-def get_bracing(q_t, bstep):
-    if q_t <= 120: return 15.0 if bstep <= 6 else 35.0
-    return 40.0 if bstep <= 6 else 55.0
+def get_bracing_kgm2(q_crane_t, step_farm_m):
+    if q_crane_t <= 120: return 15.0 if step_farm_m <= 6 else 35.0
+    return 40.0 if step_farm_m <= 6 else 55.0
 
-def get_crane_beam_kgm(q_t, span_m, n_cranes):
+def get_crane_beam_kgm(q_crane_t, span_pb_m, n_cranes):
     try:
-        if q_t <= 50: table, q_ord = CRANE_BEAM_T1, _CB_Q1
-        else:         table, q_ord = CRANE_BEAM_T2, _CB_Q2
-        spans = sorted(table.keys())
-        span_key = ceil_to_table(span_m, spans)
+        if q_crane_t <= 50: table, q_ord = CRANE_BEAM_T1, _CB_Q1
+        else:               table, q_ord = CRANE_BEAM_T2, _CB_Q2
+        span_key = ceil_to_table(span_pb_m, sorted(table.keys()))
         vals = table.get(span_key)
         if vals is None: return None
-        qi = min(range(len(q_ord)), key=lambda i: abs(q_ord[i]-q_t))
-        ci = qi*2 + (0 if n_cranes==1 else 1)
+        qi = min(range(len(q_ord)), key=lambda i: abs(q_ord[i] - q_crane_t))
+        ci = qi * 2 + (0 if n_cranes == 1 else 1)
         return vals[ci] if ci < len(vals) else None
-    except: return None
+    except Exception: return None
 
-def get_brake_kgm(q_t, span_m, n_cranes, with_pass, is_edge):
+def get_brake_kgm(q_crane_t, span_pb_m, n_cranes, with_passage, is_edge):
     try:
-        table = BRAKE_T1 if q_t<=50 else BRAKE_T2
-        spans = sorted({k[0] for k in table})
-        span_key = ceil_to_table(span_m, spans)
-        vals = table.get((span_key, is_edge, with_pass))
+        table = BRAKE_T1 if q_crane_t <= 50 else BRAKE_T2
+        span_key = ceil_to_table(span_pb_m, sorted({k[0] for k in table}))
+        vals = table.get((span_key, is_edge, with_passage))
         if vals is None:
-            vals = next((v for k,v in table.items() if k[0]==span_key), None)
+            vals = next((v for k, v in table.items() if k[0] == span_key), None)
         if vals:
-            return vals[0 if n_cranes==1 else min(1,len(vals)-1)]
-    except: pass
+            return vals[0 if n_cranes == 1 else min(1, len(vals) - 1)]
+    except Exception: pass
     return None
 
 def get_fakhverk_kgm2(step_col, has_post, h_bld, rig_load):
     try:
-        if step_col<=6 and has_post: ft='III'
-        elif step_col<=6: ft='I'
-        else: ft='II'
-        lc = 0 if rig_load<=0 else (1 if rig_load<=100 else 2)
-        hc = 0 if h_bld<=10 else (1 if h_bld<=20 else 2)
+        if step_col <= 6 and has_post: ft = 'III'
+        elif step_col <= 6:            ft = 'I'
+        else:                          ft = 'II'
+        lc = 0 if rig_load <= 0 else (1 if rig_load <= 100 else 2)
+        hc = 0 if h_bld <= 10 else (1 if h_bld <= 20 else 2)
         return FAKHVERK_DATA.get((ft, lc, hc))
-    except: return None
+    except Exception: return None
 
-def calculate(params):
-    L_build=params["L_build"]; W_build=params["W_build"]
-    L_span=params["L_span"];   B_step=params["B_step"]
-    col_step=params["col_step"]; h_rail=params["h_rail"]
-    Q_snow=params["Q_snow"];   Q_dust=params["Q_dust"]
-    Q_roof=params["Q_roof"];   Q_purlin=params["Q_purlin"]
-    yc=params["yc"];           truss_type=params["truss_type"]
-    q_crane_t=params["q_crane_t"]; n_cranes=params["n_cranes"]
-    with_pass=params["with_pass"]; rig_load=params["rig_load"]
-    has_post=params["has_post"]; bld_type=params["bld_type"]
+def get_pipe_support_kgm2(bld_type):
+    lo, hi = PIPE_SUPPORT.get(bld_type, (11, 22))
+    return (lo + hi) / 2
 
-    res={}
-    S_floor=L_build*W_build; P_walls=2*(L_build+W_build)
-    H_lower=h_rail
+# ════════════════════════════════════════════════════════════
+#  РАСЧЁТ — идентичен desktop v3.0
+# ════════════════════════════════════════════════════════════
 
-    # 1. ПРОГОНЫ
-    step_p=3.0
-    q_pr_tm=(Q_roof+Q_purlin+Q_snow+Q_dust)*step_p*yc/9.81
-    mass_p, p_name=select_purlin(q_pr_tm, B_step)
-    n_pr=L_span/step_p+3
-    g_pur=mass_p*n_pr/(L_span*B_step)
-    res["прогоны"]=dict(профиль=p_name, нагрузка_тм=round(q_pr_tm,3),
-        расход_кгм2=round(g_pur,2), масса_т=round(g_pur*S_floor/1000,2))
+def calculate(gp: dict, spans: list) -> dict:
+    res = {}
+    log = []
+    L_build = gp["L_build"]
+    Q_snow  = gp["Q_snow"]
+    Q_dust  = gp["Q_dust"]
+    Q_tech  = gp["Q_tech"]
+    yc      = gp["yc"]
+    N = len(spans)
+    W_build = sum(sp["L_span"] for sp in spans)
+    S_floor = L_build * W_build
+    P_walls = 2 * (L_build + W_build)
+    log.append(f"Пролётов: {N}  W={W_build:.0f}м  S={S_floor:.0f}м²")
 
-    # 2. ФЕРМЫ
-    g_links=0.05; gn=Q_snow+Q_dust+Q_roof+Q_purlin+g_links
-    Q_tm=(gn*B_step*yc)/9.81
-    g_m1=None
-    if truss_type=="Уголки":
-        G_kn=(gn*B_step/1000+0.018)*1.4*L_span**2/0.85*yc
-        G_t=G_kn/9.81
-        n_tr=L_build/B_step+1
-        g_m1=round(G_t*1000*n_tr/S_floor,2)
-    mtr=get_truss_mass(truss_type,L_span,Q_tm)
-    g_m2=None
-    if mtr is not None:
-        n_tr=L_build/B_step+1
-        g_m2=round(mtr*1000*n_tr/S_floor,2)
-    res["фермы"]=dict(нагрузка_тм=round(Q_tm,3),М1=g_m1 or "н/п",М2=g_m2 or "н/п",
-        масса_т_М2=round(g_m2*S_floor/1000,2) if g_m2 else "н/п")
+    def _span_col_heights(sp):
+        h_b = sp["col_step"] / 6 if sp["q_crane_t"] <= 50 else sp["col_step"] / 7
+        if sp["q_crane_t"] <= 20:   h_r = 0.130
+        elif sp["q_crane_t"] <= 50: h_r = 0.150
+        elif sp["q_crane_t"] <= 80: h_r = 0.170
+        else:                        h_r = 0.180
+        H_full = sp["h_rail"] + 4.5
+        if sp.get("H_col_ov", 0) > 0:
+            H_full = sp["H_col_ov"]
+        H_lower = sp["h_rail"] - h_b - h_r + 0.6
+        H_upper = H_full - H_lower
+        return H_upper, H_lower, H_full
 
-    # 3. СВЯЗИ
-    g_br=get_bracing(q_crane_t,B_step)
-    res["связи"]=dict(расход_кгм2=g_br, масса_т=round(g_br*S_floor/1000,2))
+    span_heights = [_span_col_heights(sp) for sp in spans]
+    for i, (Hu, Hl, Hf) in enumerate(span_heights):
+        log.append(f"Пролёт {i+1}: H_кол={Hf:.2f}м (надкр={Hu:.2f}м подкр={Hl:.2f}м)")
+    H_full_max = max(h[2] for h in span_heights)
+    S_walls = P_walls * H_full_max
 
-    # 4. ПОДСТРОПИЛЬНЫЕ ФЕРМЫ
-    if col_step==12 and B_step<col_step:
-        R_kn=Q_tm*9.81*L_span/2; R_t=R_kn/9.81
-        Rf=max(100,min(R_kn,400)); a=(Rf-100)*0.0002+0.044
-        G_pf_t=a*144
-        n_sub=(L_build/col_step)*(max(0,round(W_build/L_span)-1))
-        if n_sub<=0: n_sub=L_build/col_step
-        g_s1=round(G_pf_t*1000*n_sub/S_floor,2)
-        ms=get_subtruss_mass(R_t)
-        g_s2=round(ms*1000*n_sub/S_floor,2) if ms else "н/п"
-        res["подстроп"]=dict(R_кн=round(R_kn,1),М1=g_s1,М2=g_s2)
+    # 1+2. Прогоны и фермы
+    g_links = 0.05
+    G_pur_all_t = 0.0; G_tr_m1_all = 0.0; G_tr_m2_all = 0.0
+    span_data = []
+    for i, sp in enumerate(spans):
+        L = sp["L_span"]; tt = sp["truss_type"]; B = sp["B_step"]
+        Ss = L_build * L
+        Q_load_total = sp["Q_roof"] + sp["Q_purlin"] + Q_snow + Q_dust + Q_tech + g_links
+        a_pr = 3.0
+        qp_tm = (sp["Q_roof"] + sp["Q_purlin"] + Q_snow + Q_dust + Q_tech) * a_pr * yc / 9.81
+        mp, pname = select_purlin(qp_tm, B)
+        n_pr = int(L / a_pr) + 1
+        g_pur = mp * n_pr / (L * B)
+        G_pur_t = g_pur * Ss / 1000
+        G_pur_all_t += G_pur_t
+        n_tr = L_build / B + 1
+        Q_tm = Q_load_total * B * yc / 9.81
+        G_tr1 = None
+        if tt == "Уголки":
+            Gkn = (Q_load_total * B / 1000 + 0.018) * 1.4 * L**2 / 0.85 * yc
+            G_tr1 = Gkn / 9.81 * n_tr
+            G_tr_m1_all += G_tr1
+        G_tr2 = None
+        mt = get_truss_mass_m2(tt, L, Q_tm)
+        if mt is not None:
+            G_tr2 = mt * n_tr
+            G_tr_m2_all += G_tr2
+        span_data.append({
+            "idx": i+1, "L_span": L, "S_span": Ss, "tt": tt, "B_step": B,
+            "purlin": pname, "qp_tm": round(qp_tm, 3),
+            "g_pur_kgm2": round(g_pur, 2), "G_pur_t": round(G_pur_t, 2),
+            "Q_tm": round(Q_tm, 3),
+            "G_tr_m1": round(G_tr1, 2) if G_tr1 is not None else "н/п",
+            "G_tr_m2": round(G_tr2, 2) if G_tr2 is not None else "н/п",
+            "Q_load_total": Q_load_total,
+        })
+
+    res["прогоны"] = {
+        "масса_общая_т": round(G_pur_all_t, 2),
+        "по_пролётам": [{"пролёт":d["idx"],"профиль":d["purlin"],
+            "нагрузка_тм":d["qp_tm"],"расход_кгм2":d["g_pur_kgm2"],
+            "масса_т":d["G_pur_t"]} for d in span_data],
+    }
+    res["фермы"] = {
+        "масса_общая_т_М1": round(G_tr_m1_all, 2),
+        "масса_общая_т_М2": round(G_tr_m2_all, 2),
+        "по_пролётам": [{"пролёт":d["idx"],"нагрузка_тм":d["Q_tm"],
+            "G_М1_т":d["G_tr_m1"],"G_М2_т":d["G_tr_m2"]} for d in span_data],
+    }
+
+    # 3. Связи
+    G_br_total = 0.0; br_rows = []
+    for i, sp in enumerate(spans):
+        Ss = L_build * sp["L_span"]
+        gbr = get_bracing_kgm2(sp["q_crane_t"], sp["B_step"])
+        Gbr = gbr * Ss / 1000
+        G_br_total += Gbr
+        br_rows.append({"пролёт": i+1, "расход_кгм2": gbr, "масса_т": round(Gbr, 2)})
+    res["связи_покрытия"] = {
+        "расход_кгм2": round(G_br_total * 1000 / S_floor, 2) if S_floor else 0,
+        "масса_общая_т": round(G_br_total, 2),
+        "по_пролётам": br_rows,
+    }
+
+    # 4. Подстропильные фермы
+    G_sub_m1 = 0.0; G_sub_m2 = 0.0; sub_rows = []
+    need_sub = any(sp["col_step"] == 12 and sp["B_step"] < sp["col_step"] for sp in spans)
+    if need_sub:
+        for i, sp in enumerate(spans):
+            if not (sp["col_step"] == 12 and sp["B_step"] < sp["col_step"]):
+                sub_rows.append({"пролёт": i+1, "G_М1_т": 0, "G_М2_т": "н/п", "R_кн": 0})
+                continue
+            L = sp["L_span"]; B = sp["B_step"]
+            Q_load_sp = span_data[i]["Q_load_total"]
+            n_bays = L_build / sp["col_step"]
+            R_kn = Q_load_sp * B * yc * L / 2
+            R_t  = R_kn / 9.81
+            Rf   = max(100, min(R_kn, 400))
+            apf  = (Rf - 100) * 0.0002 + 0.044
+            G1   = apf * 144 * n_bays / N
+            G_sub_m1 += G1
+            mt = get_subtruss_mass_m2(R_t)
+            G2 = mt * n_bays / N if mt else None
+            if G2: G_sub_m2 += G2
+            sub_rows.append({"пролёт": i+1, "R_кн": round(R_kn, 1),
+                "G_М1_т": round(G1, 2), "G_М2_т": round(G2, 2) if G2 else "н/п"})
+        res["подстропильные_фермы"] = {
+            "масса_общая_т_М1": round(G_sub_m1, 2),
+            "масса_общая_т_М2": round(G_sub_m2, 2),
+            "по_пролётам": sub_rows,
+        }
     else:
-        res["подстроп"]=dict(примечание="Не требуются")
+        res["подстропильные_фермы"] = {"примечание": "Не требуются"}
 
-    # 5. ПОДКРАНОВЫЕ БАЛКИ
-    a_pb=_lookup(CRANE_BEAM_ALPHA,q_crane_t)
-    qr=_lookup(RAIL_WEIGHT_KN,q_crane_t); L_pb=float(col_step)
-    G_pb_kn=(a_pb*L_pb+qr)*L_pb*1.4
-    G_pb_t=G_pb_kn/9.81
-    n_along=math.ceil(L_build/col_step)
-    n_edge=2; n_mid=max(0,round(W_build/L_span)-1)
-    g_pb_m1=round(G_pb_t*1000*(n_edge+n_mid*2)*n_along/S_floor,2)
-    pb_e=get_crane_beam_kgm(q_crane_t,L_pb,n_cranes)
-    br_e=get_brake_kgm(q_crane_t,L_pb,n_cranes,with_pass,True)
-    pb_m=get_crane_beam_kgm(q_crane_t,L_pb,n_cranes)
-    br_m=get_brake_kgm(q_crane_t,L_pb,n_cranes,with_pass,False)
-    g_pb_m2="н/п"
-    if pb_e and br_e is not None:
-        G_e=(pb_e+(br_e or 0))*L_pb*n_along*n_edge/1000
-        G_m=((pb_m or 0)+(br_m or 0))*L_pb*n_along*n_mid/1000
-        g_pb_m2=round((G_e+G_m)*1000/S_floor,2)
-    res["подкрановые"]=dict(G_1пб_т=round(G_pb_t,2),
-        М1=g_pb_m1, М2=g_pb_m2, балка_кгм=pb_e, тормоз_кгм=br_e)
+    # 5. Подкрановые балки
+    G_pb_m1 = 0.0; G_pb_m2 = 0.0; pb_rows = []
 
-    # 6. КОЛОННЫ
-    rho=78.5; pu=1.4; pl=2.1; kmu=0.275; kml=0.45
-    hbr=BEAM_HEIGHT_RATIO.get(
-        min(BEAM_HEIGHT_RATIO,key=lambda k:abs(k-q_crane_t)),(1/7,1/9))
-    h_pb_beam=L_pb*(hbr[0] if col_step<=6 else hbr[1])
-    H_upper=max(1.5,h_pb_beam+0.12+0.3)
-    H_full=H_upper+H_lower
-    S_walls=P_walls*H_full
-    gst=0.25; aw=0.15
-    Gw_up=gst*H_upper*(1-aw)*col_step
-    Gw_lo=gst*H_lower*(1-aw)*col_step
-    SFv=(Q_roof+Q_purlin+Q_snow+Q_dust)*col_step*L_span/2+Gw_up
-    Gcu=SFv*rho*pu*H_upper/(kmu*24000)
-    qeq=_lookup(CRANE_Q_EQUIV,q_crane_t)
-    D=qeq*col_step*1.1*yc
-    SFn=SFv+D+G_pb_kn+Gw_lo+Gcu
-    Gcl=SFn*rho*pl*H_lower/(kml*24000)
-    Gc_kg=(Gcu+Gcl)/9.81*1000
-    nc=(round(L_build/col_step)+1)*(round(W_build/L_span)+1)
-    g_col=round(Gc_kg*nc/S_floor,2)
-    res["колонны"]=dict(n=nc,ΣFv=round(SFv,1),ΣFn=round(SFn,1),
-        масса_1_кг=round(Gc_kg,1), расход_кгм2=g_col,
-        масса_т=round(Gc_kg*nc/1000,2))
+    def _pb_row(sp_obj, is_edge, label):
+        nonlocal G_pb_m1, G_pb_m2
+        q = sp_obj["q_crane_t"]; nc = sp_obj["n_cranes"]
+        wp = sp_obj["with_pass"]; mode = sp_obj["crane_mode"]
+        mf_m1 = CRANE_MODE_FACTOR_M1[mode]
+        mf_m2 = CRANE_MODE_FACTOR_M2[mode]
+        L_pb = float(sp_obj["col_step"])
+        n_bays_a = math.ceil(L_build / L_pb)
+        alp = _lkp(CRANE_BEAM_ALPHA, q)
+        qr  = _lkp(RAIL_WEIGHT_KN, q)
+        G1t = (alp * L_pb + qr) * L_pb * 1.4 / 9.81 * mf_m1
+        G_pb_m1 += G1t * n_bays_a
+        pb_kgm = get_crane_beam_kgm(q, L_pb, nc)
+        br_kgm = get_brake_kgm(q, L_pb, nc, wp, is_edge)
+        if pb_kgm and br_kgm is not None:
+            G_pb_m2 += (pb_kgm + br_kgm) * mf_m2 * L_pb * n_bays_a / 1000
+        pb_rows.append({"ряд": label, "G_М1_т": round(G1t * n_bays_a, 2), "q": q})
 
-    # 7. ФАХВЕРК
-    gf=get_fakhverk_kgm2(col_step,has_post,H_full,rig_load)
-    if gf:
-        res["фахверк"]=dict(расход_кгм2_стен=gf, масса_т=round(gf*S_walls/1000,2))
-    else:
-        res["фахверк"]=dict(расход_кгм2_стен="н/п",масса_т="н/п")
+    _pb_row(spans[0], True, "Крайний Л")
+    for mi in range(1, N):
+        _pb_row(spans[mi-1], False, f"Средний {mi}Л")
+        _pb_row(spans[mi],   False, f"Средний {mi}П")
+    _pb_row(spans[N-1], True, "Крайний П")
 
-    # 8. ОГРАЖДЕНИЕ
-    res["ограждение"]=dict(стены_м2=round(S_walls,1),кровля_м2=round(S_floor,1))
+    res["подкрановые_балки"] = {
+        "масса_общая_т_М1": round(G_pb_m1, 2),
+        "масса_общая_т_М2": round(G_pb_m2, 2) if G_pb_m2 > 0 else "н/п",
+        "ряды_колонн": pb_rows,
+    }
 
-    # 9. ОПОРЫ
-    pipe_map={"Основные производственные":(11,22),
-              "Здания энергоносителей":(23,40),"Вспомогательные здания":(2,4)}
-    rng=pipe_map.get(bld_type,(11,22))
-    gp=(rng[0]+rng[1])/2
-    res["опоры"]=dict(расход_кгм2=gp, масса_т=round(gp*S_floor/1000,2))
+    # 6. Колонны
+    rho=78.5; pu=1.4; pl=2.1; kMu=0.275; kMl=0.45; gst=0.25; aw=0.15
 
-    def sf(d,*ks):
-        for k in ks:
-            v=d.get(k)
-            if isinstance(v,(int,float)): return v
+    def _col_kg(L_sp, q_cr, H_up, H_lo, cs, Q_load_sp):
+        L_pb_loc = float(cs)
+        Gwu = gst * H_up * (1 - aw) * cs
+        Gwl = gst * H_lo * (1 - aw) * cs
+        SFv = Q_load_sp * cs * L_sp / 2 + Gwu
+        Gcu = SFv * rho * pu * H_up / (kMu * 240000)
+        qeq = _lkp(CRANE_Q_EQUIV, q_cr)
+        D   = qeq * cs * 1.1 * yc
+        alp = _lkp(CRANE_BEAM_ALPHA, q_cr)
+        qrr = _lkp(RAIL_WEIGHT_KN, q_cr)
+        Gpb = (alp * L_pb_loc + qrr) * L_pb_loc * 1.4
+        SFn = SFv + D + Gpb + Gwl + Gcu
+        Gcl = SFn * rho * pl * H_lo / (kMl * 240000)
+        return (Gcu + Gcl) / 9.81 * 1000
+
+    G_cols_t = 0.0; col_rows_detail = []
+    sp0 = spans[0]; H_up0, H_lo0, _ = span_heights[0]
+    n_col_0 = round(L_build / sp0["col_step"]) + 1
+    Gce = _col_kg(sp0["L_span"], sp0["q_crane_t"], H_up0, H_lo0, sp0["col_step"], span_data[0]["Q_load_total"])
+    G_cols_t += Gce * n_col_0 / 1000
+    col_rows_detail.append({"ряд": "Крайний Л", "масса_1_кг": round(Gce, 1), "масса_ряд_т": round(Gce * n_col_0 / 1000, 2)})
+
+    for mi in range(1, N):
+        sL = spans[mi-1]; sR = spans[mi]
+        H_upL, H_loL, _ = span_heights[mi-1]
+        cs_mid = sL["col_step"]
+        n_col_mid = round(L_build / cs_mid) + 1
+        Q_L = span_data[mi-1]["Q_load_total"]; Q_R = span_data[mi]["Q_load_total"]
+        Gwu = gst * H_upL * (1 - aw) * cs_mid
+        Gwl = gst * H_loL * (1 - aw) * cs_mid
+        SFv = (Q_L + Q_R) * cs_mid * (sL["L_span"] + sR["L_span"]) / 4 + Gwu
+        Gcu = SFv * rho * pu * H_upL / (kMu * 240000)
+        qeqL = _lkp(CRANE_Q_EQUIV, sL["q_crane_t"]); qeqR = _lkp(CRANE_Q_EQUIV, sR["q_crane_t"])
+        D = (qeqL + qeqR) * cs_mid * 1.1 * yc
+        alpL = _lkp(CRANE_BEAM_ALPHA, sL["q_crane_t"]); qrL = _lkp(RAIL_WEIGHT_KN, sL["q_crane_t"])
+        alpR = _lkp(CRANE_BEAM_ALPHA, sR["q_crane_t"]); qrR = _lkp(RAIL_WEIGHT_KN, sR["q_crane_t"])
+        Gpb = (alpL * float(sL["col_step"]) + qrL) * float(sL["col_step"]) * 1.4 + \
+              (alpR * float(sR["col_step"]) + qrR) * float(sR["col_step"]) * 1.4
+        SFn = SFv + D + Gpb + Gwl + Gcu
+        Gcl = SFn * rho * pl * H_loL / (kMl * 240000)
+        Gcm_kg = (Gcu + Gcl) / 9.81 * 1000
+        G_cols_t += Gcm_kg * n_col_mid / 1000
+        col_rows_detail.append({"ряд": f"Средний {mi}", "масса_1_кг": round(Gcm_kg, 1), "масса_ряд_т": round(Gcm_kg * n_col_mid / 1000, 2)})
+
+    spN = spans[N-1]; H_upN, H_loN, _ = span_heights[N-1]
+    n_col_N = round(L_build / spN["col_step"]) + 1
+    Gce2 = _col_kg(spN["L_span"], spN["q_crane_t"], H_upN, H_loN, spN["col_step"], span_data[N-1]["Q_load_total"])
+    G_cols_t += Gce2 * n_col_N / 1000
+    col_rows_detail.append({"ряд": "Крайний П", "масса_1_кг": round(Gce2, 1), "масса_ряд_т": round(Gce2 * n_col_N / 1000, 2)})
+
+    res["колонны"] = {
+        "H_full_м": round(span_heights[0][2], 2),
+        "расход_кгм2": round(G_cols_t * 1000 / S_floor, 2) if S_floor else 0,
+        "масса_общая_т": round(G_cols_t, 2),
+        "по_рядам": col_rows_detail,
+        "высоты_пролётов": [{"пролёт":i+1,"H_full":round(h[2],2),"H_upper":round(h[0],2),"H_lower":round(h[1],2)} for i,h in enumerate(span_heights)],
+    }
+
+    # 7. Фахверк
+    G_fakh_total = 0.0; fakh_rows = []
+    for i, sp in enumerate(spans):
+        H_full_sp = span_heights[i][2]
+        S_walls_sp = P_walls * H_full_sp / N
+        gf = get_fakhverk_kgm2(sp["col_step"], sp["has_post"], H_full_sp, sp["rig_load"])
+        if gf:
+            Gf = gf * S_walls_sp / 1000
+            G_fakh_total += Gf
+            fakh_rows.append({"пролёт": i+1, "расход_кгм2_стены": gf, "масса_т": round(Gf, 2)})
+        else:
+            fakh_rows.append({"пролёт": i+1, "ошибка": "н/п", "масса_т": 0})
+    res["фахверк"] = {
+        "площадь_стен_м2": round(S_walls, 1),
+        "масса_общая_т": round(G_fakh_total, 2),
+        "по_пролётам": fakh_rows,
+    }
+
+    # 8. Ограждение
+    res["ограждение"] = {"стены_м2": round(S_walls, 1), "кровля_м2": round(S_floor, 1)}
+
+    # 9. Опоры трубопроводов
+    G_pipe_total = 0.0; pipe_rows = []
+    for i, sp in enumerate(spans):
+        Ss = L_build * sp["L_span"]
+        gp2 = get_pipe_support_kgm2(sp["bld_type"])
+        Gp = gp2 * Ss / 1000
+        G_pipe_total += Gp
+        pipe_rows.append({"пролёт": i+1, "расход_кгм2": gp2, "масса_т": round(Gp, 2)})
+    res["опоры_трубопроводов"] = {
+        "расход_кгм2": round(G_pipe_total * 1000 / S_floor, 2) if S_floor else 0,
+        "масса_общая_т": round(G_pipe_total, 2),
+        "по_пролётам": pipe_rows,
+    }
+
+    # Итого (гибридное суммирование)
+    def sv(d, *keys):
+        for k in keys:
+            v = d.get(k)
+            if isinstance(v, (int, float)): return float(v)
         return 0.0
 
-    tm1=(sf(res["прогоны"],"масса_т")+sf(res["фермы"],"масса_т_М2")
-         +sf(res.get("подстроп",{}),"М1")*S_floor/1000
-         +sf(res["подкрановые"],"G_1пб_т")*(n_edge+n_mid*2)*n_along
-         +sf(res["колонны"],"масса_т"))
-    tm2=(sf(res["прогоны"],"масса_т")+sf(res["фермы"],"масса_т_М2")
-         +sf(res["связи"],"масса_т")
-         +sf(res.get("подстроп",{}),"М2")*S_floor/1000
-         +sf(res["подкрановые"],"М2")*S_floor/1000
-         +sf(res["колонны"],"масса_т")
-         +sf(res["фахверк"],"масса_т")
-         +sf(res["опоры"],"масса_т"))
-    res["итого"]=dict(
-        М1_т=round(tm1,2), М2_т=round(tm2,2),
-        М1_кгм2=round(tm1*1000/S_floor,2),
-        М2_кгм2=round(tm2*1000/S_floor,2))
+    common = (sv(res["прогоны"],"масса_общая_т") + sv(res["колонны"],"масса_общая_т")
+              + sv(res["связи_покрытия"],"масса_общая_т") + sv(res["фахверк"],"масса_общая_т")
+              + sv(res["опоры_трубопроводов"],"масса_общая_т"))
+    m1_spec = (sv(res["фермы"],"масса_общая_т_М1")
+               + sv(res["подстропильные_фермы"],"масса_общая_т_М1")
+               + sv(res["подкрановые_балки"],"масса_общая_т_М1"))
+    m2_spec = (sv(res["фермы"],"масса_общая_т_М2")
+               + sv(res["подстропильные_фермы"],"масса_общая_т_М2")
+               + sv(res["подкрановые_балки"],"масса_общая_т_М2"))
+    total_m1 = common + m1_spec; total_m2 = common + m2_spec
+    res["итого"] = {
+        "М1_т":    round(total_m1, 2), "М2_т":    round(total_m2, 2),
+        "М1_кгм2": round(total_m1 * 1000 / S_floor, 2) if S_floor else 0,
+        "М2_кгм2": round(total_m2 * 1000 / S_floor, 2) if S_floor else 0,
+        "min_т":   round(min(total_m1, total_m2), 2),
+        "max_т":   round(max(total_m1, total_m2), 2),
+        "S_floor": round(S_floor, 1),
+    }
+    res["_log"] = log
     return res
 
+# ════════════════════════════════════════════════════════════
+#  ЭКСПОРТ РЕЗУЛЬТАТОВ
+# ════════════════════════════════════════════════════════════
 
-# ─────────────────────────────────────────────────────────
-#  KIVY UI  (чистый Kivy, без KivyMD)
-# ─────────────────────────────────────────────────────────
+def export_to_file(plain_text: str) -> str:
+    """Сохраняет результаты в ~/Documents/ и возвращает путь."""
+    docs = os.path.expanduser("~/Documents")
+    os.makedirs(docs, exist_ok=True)
+    fname = "MetalCalc_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".txt"
+    path = os.path.join(docs, fname)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(plain_text)
+    return path
+
+# ════════════════════════════════════════════════════════════
+#  KIVY UI
+# ════════════════════════════════════════════════════════════
+
 from kivy.config import Config
-Config.set("graphics", "minimum_width", "360")
+Config.set("graphics", "minimum_width",  "360")
 Config.set("graphics", "minimum_height", "640")
 
-from kivy.app import App
-from kivy.lang import Builder
+from kivy.app            import App
+from kivy.lang           import Builder
 from kivy.uix.screenmanager import ScreenManager, Screen
-from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.boxlayout  import BoxLayout
 from kivy.uix.scrollview import ScrollView
-from kivy.uix.textinput import TextInput
-from kivy.uix.label import Label
-from kivy.uix.button import Button
-from kivy.uix.spinner import Spinner
-from kivy.uix.checkbox import CheckBox
-from kivy.metrics import dp
-from kivy.clock import Clock
-from kivy.properties import StringProperty, BooleanProperty
+from kivy.uix.textinput  import TextInput
+from kivy.uix.label      import Label
+from kivy.uix.button     import Button
+from kivy.uix.spinner    import Spinner
+from kivy.uix.checkbox   import CheckBox
+from kivy.uix.widget     import Widget
+from kivy.metrics        import dp
+from kivy.clock          import Clock
+from kivy.properties     import StringProperty, BooleanProperty
+from kivy.utils          import platform
 
-_BLUE  = (0.18, 0.45, 0.8, 1)
-_DARK  = (0.13, 0.13, 0.13, 1)
-_GRAY  = (0.25, 0.25, 0.25, 1)
+# Safe-area top padding для iPhone с чёлкой / Dynamic Island
+_SAFE_TOP = dp(50) if platform == "ios" else 0
+_BLUE     = (0.18, 0.45, 0.8, 1)
+_DARK     = (0.13, 0.13, 0.13, 1)
+_GRAY     = (0.22, 0.22, 0.22, 1)
+_ACCENT   = (0.20, 0.50, 0.90, 1)
+_GREEN    = (0.12, 0.60, 0.30, 1)
 
+# Значения полей пролёта по умолчанию
+_SPAN_DEFAULTS = dict(
+    L_span=24.0, B_step=6, col_step="6", h_rail=8.0, H_col_ov=0.0,
+    Q_roof=0.30, Q_purlin=0.25, truss_type="Уголки",
+    q_crane_t=50.0, n_cranes="1", with_pass="С проходом",
+    crane_mode="Режим 1-6К", rig_load=0.0, has_post=False,
+    bld_type="Основные производственные",
+)
 
 class Toolbar(BoxLayout):
     title = StringProperty("")
     back  = BooleanProperty(False)
 
+class InputScreen(Screen):
+    pass
+
+class ResultScreen(Screen):
+    pass
 
 KV = """
 #:import dp kivy.metrics.dp
@@ -372,6 +594,7 @@ ScreenManager:
         bold: True
         font_size: dp(20)
     Label:
+        id: toolbar_label
         text: root.title
         bold: True
         font_size: dp(17)
@@ -388,6 +611,10 @@ ScreenManager:
             Rectangle:
                 pos: self.pos
                 size: self.size
+        Widget:
+            id: safe_top
+            size_hint_y: None
+            height: 0
         Toolbar:
             id: input_toolbar
         ScrollView:
@@ -399,8 +626,9 @@ ScreenManager:
                 size_hint_y: None
                 height: self.minimum_height
         BoxLayout:
+            id: bottom_bar
             size_hint_y: None
-            height: dp(54)
+            height: dp(56)
             padding: dp(8), dp(4)
             spacing: dp(8)
             canvas.before:
@@ -411,16 +639,16 @@ ScreenManager:
                     size: self.size
             Button:
                 id: calc_btn
-                on_release: app.do_calculate()
                 background_color: 0.18, 0.45, 0.8, 1
                 bold: True
                 font_size: dp(14)
+                on_release: app.do_calculate()
             Button:
                 id: reset_btn
-                on_release: app.do_reset()
                 size_hint_x: None
-                width: dp(100)
+                width: dp(90)
                 background_color: 0.35, 0.35, 0.35, 1
+                on_release: app.do_reset()
 
 <ResultScreen>:
     name: "result"
@@ -432,6 +660,10 @@ ScreenManager:
             Rectangle:
                 pos: self.pos
                 size: self.size
+        Widget:
+            id: safe_top_r
+            size_hint_y: None
+            height: 0
         Toolbar:
             id: result_toolbar
             back: True
@@ -446,70 +678,88 @@ ScreenManager:
                 padding: dp(12), dp(8)
                 markup: True
                 font_size: dp(13)
+        BoxLayout:
+            size_hint_y: None
+            height: dp(56)
+            padding: dp(8), dp(4)
+            spacing: dp(8)
+            canvas.before:
+                Color:
+                    rgba: 0.18, 0.18, 0.18, 1
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+            Button:
+                id: save_btn
+                background_color: 0.12, 0.60, 0.30, 1
+                bold: True
+                font_size: dp(14)
+                on_release: app.do_save_results()
+            Button:
+                id: back_btn
+                size_hint_x: None
+                width: dp(90)
+                background_color: 0.35, 0.35, 0.35, 1
+                on_release: app.go_back()
 """
-
-
-class InputScreen(Screen):
-    pass
-
-
-class ResultScreen(Screen):
-    pass
 
 
 class MetalApp(App):
 
     def build(self):
         try:
-            self.title = "Металлоёмкость зданий v1.0"
+            self.title = "MetalCalc"
             root = Builder.load_string(KV)
             self.sm = root
-            # Кириллицу выставляем из Python — KV-парсер не поддерживает
-            # non-ASCII строки в property-значениях (SyntaxError)
+            self._last_result_text = ""  # plain text for export
+
             inp = root.get_screen("input")
             res = root.get_screen("result")
+
+            # Кириллица — только из Python
             inp.ids.input_toolbar.title = "Металлоёмкость зданий"
             res.ids.result_toolbar.title = "Результаты"
-            inp.ids.calc_btn.text = "РАССЧИТАТЬ"
+            inp.ids.calc_btn.text  = "РАССЧИТАТЬ"
             inp.ids.reset_btn.text = "СБРОС"
-            self._build_form(inp.ids.form)
+            res.ids.save_btn.text  = "СОХРАНИТЬ В ФАЙЛ"
+            res.ids.back_btn.text  = "НАЗАД"
+
+            # Safe area
+            inp.ids.safe_top.height  = _SAFE_TOP
+            res.ids.safe_top_r.height = _SAFE_TOP
+
+            self._form = inp.ids.form
+            self._span_blocks = []   # list of dicts: {key: widget}
+            self._build_form()
             return root
         except Exception:
             tb = traceback.format_exc()
-            # Показать ошибку прямо на экране
             box = BoxLayout(orientation="vertical")
-            sv = ScrollView()
+            sv  = ScrollView()
             lbl = Label(
-                text="[b][color=ff4444]ОШИБКА ЗАПУСКА:[/color][/b]\n\n" + tb,
-                markup=True,
-                size_hint_y=None,
-                font_size="11sp",
-                padding=(10, 10),
-                halign="left",
-                valign="top",
+                text="[b][color=ff4444]ОШИБКА:[/color][/b]\n\n" + tb,
+                markup=True, size_hint_y=None, font_size="11sp",
+                padding=(10, 10), halign="left", valign="top",
             )
             lbl.bind(
                 width=lambda *_: lbl.setter("text_size")(lbl, (lbl.width, None)),
                 texture_size=lambda *_: lbl.setter("height")(lbl, lbl.texture_size[1]),
             )
-            sv.add_widget(lbl)
-            box.add_widget(sv)
+            sv.add_widget(lbl); box.add_widget(sv)
             return box
 
-    # ── Вспомогательные виджеты ──────────────────────────
+    # ── Виджеты-помощники ────────────────────────────────
 
-    def _section(self, title):
+    def _section_label(self, title, color="4fc3f7"):
         lbl = Label(
-            text=f"[b][color=4fc3f7]{title}[/color][/b]",
-            markup=True,
-            size_hint_y=None, height=dp(38),
-            halign="left", valign="middle",
-            font_size=dp(14),
+            text=f"[b][color={color}]{title}[/color][/b]",
+            markup=True, size_hint_y=None, height=dp(38),
+            halign="left", valign="middle", font_size=dp(14),
         )
         lbl.bind(size=lbl.setter("text_size"))
         return lbl
 
-    def _field(self, label, default):
+    def _field_widget(self, label, default, input_filter="float"):
         box = BoxLayout(orientation="vertical", size_hint_y=None,
                         height=dp(68), spacing=dp(2))
         lbl = Label(text=label, size_hint_y=None, height=dp(22),
@@ -517,22 +767,20 @@ class MetalApp(App):
                     font_size=dp(12), color=(0.8, 0.8, 0.8, 1))
         lbl.bind(size=lbl.setter("text_size"))
         ti = TextInput(
-            text=str(default),
-            multiline=False,
-            input_filter="float",
+            text=str(default), multiline=False,
+            input_filter=input_filter,
             size_hint_y=None, height=dp(38),
-            background_color=(0.22, 0.22, 0.22, 1),
+            background_color=_GRAY,
             foreground_color=(1, 1, 1, 1),
             cursor_color=(0.4, 0.7, 1, 1),
             font_size=dp(15),
         )
-        box.add_widget(lbl)
-        box.add_widget(ti)
+        box.add_widget(lbl); box.add_widget(ti)
         return box, ti
 
-    def _spinner_row(self, label, values, default):
-        box = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(68),
-                        spacing=dp(2))
+    def _spinner_widget(self, label, values, default):
+        box = BoxLayout(orientation="vertical", size_hint_y=None,
+                        height=dp(68), spacing=dp(2))
         lbl = Label(text=label, size_hint_y=None, height=dp(22),
                     halign="left", valign="middle",
                     font_size=dp(12), color=(0.8, 0.8, 0.8, 1))
@@ -540,110 +788,186 @@ class MetalApp(App):
         sp = Spinner(text=default, values=values,
                      size_hint=(1, None), height=dp(38),
                      background_color=_BLUE, color=(1, 1, 1, 1),
-                     font_size=dp(14))
-        box.add_widget(lbl)
-        box.add_widget(sp)
+                     font_size=dp(13))
+        box.add_widget(lbl); box.add_widget(sp)
         return box, sp
 
-    def _checkbox_row(self, label):
+    def _checkbox_widget(self, label, default=False):
         box = BoxLayout(orientation="horizontal", size_hint_y=None,
                         height=dp(44), spacing=dp(8))
         cb = CheckBox(size_hint=(None, 1), width=dp(44),
-                      color=_BLUE)
+                      active=default, color=_BLUE)
         lbl = Label(text=label, halign="left", valign="middle",
                     font_size=dp(13), color=(0.9, 0.9, 0.9, 1))
         lbl.bind(size=lbl.setter("text_size"))
-        box.add_widget(cb)
-        box.add_widget(lbl)
+        box.add_widget(cb); box.add_widget(lbl)
         return box, cb
 
-    def _build_form(self, form):
-        F = form
-        fields = {}
-        def s(t):  F.add_widget(self._section(t))
-        def f(k, label, default):
-            box, ti = self._field(label, default)
-            F.add_widget(box); fields[k] = ti
+    def _separator(self):
+        w = Widget(size_hint_y=None, height=dp(1))
+        with w.canvas:
+            from kivy.graphics import Color, Rectangle
+            Color(0.3, 0.3, 0.3, 1)
+            Rectangle(pos=w.pos, size=w.size)
+        w.bind(pos=lambda inst, v: setattr(inst.canvas.children[1], 'pos', v),
+               size=lambda inst, v: setattr(inst.canvas.children[1], 'size', v))
+        return w
+
+    # ── Построение формы ─────────────────────────────────
+
+    def _build_form(self):
+        F = self._form
+        F.clear_widgets()
+        self._span_blocks = []
+        self._global_fields = {}
+
+        def s(t, color="4fc3f7"): F.add_widget(self._section_label(t, color))
+        def f(d, k, label, default, filt="float"):
+            box, ti = self._field_widget(label, default, filt)
+            F.add_widget(box); d[k] = ti
+        def sp(d, k, label, values, default):
+            box, spinner = self._spinner_widget(label, values, default)
+            F.add_widget(box); d[k] = spinner
+
+        gf = self._global_fields
+        s("Параметры здания")
+        f(gf, "L_build", "Длина здания, м", 120)
+        f(gf, "Q_snow",  "Снег, кН/м²", 2.1)
+        f(gf, "Q_dust",  "Пыль, кН/м²", 0.0)
+        f(gf, "Q_tech",  "Тех. нагрузка на кровлю, кН/м²", 0.0)
+        f(gf, "yc",      "Коэф. ответственности γc", 1.0)
+
+        # Первый пролёт
+        self._add_span_block()
+
+        # Кнопки управления пролётами
+        self._btn_container = BoxLayout(size_hint_y=None, height=dp(48),
+                                        spacing=dp(8), padding=(0, dp(4)))
+        btn_add = Button(text="+ Добавить пролёт", background_color=_ACCENT,
+                         font_size=dp(13), bold=True)
+        btn_add.bind(on_release=lambda *_: self._add_span_block())
+        btn_rem = Button(text="— Убрать пролёт", background_color=(0.45,0.2,0.2,1),
+                         font_size=dp(13), size_hint_x=None, width=dp(150))
+        btn_rem.bind(on_release=lambda *_: self._remove_span_block())
+        self._btn_add = btn_add; self._btn_rem = btn_rem
+        self._btn_container.add_widget(btn_add)
+        self._btn_container.add_widget(btn_rem)
+        F.add_widget(self._btn_container)
+        self._update_span_buttons()
+
+    def _add_span_block(self):
+        if len(self._span_blocks) >= 6: return
+        F = self._form
+        idx = len(self._span_blocks) + 1
+        d = {}           # input widgets keyed by param name
+        added = []       # all top-level widgets added to F for this span
+
+        F.remove_widget(self._btn_container)
+
+        def _add(w): F.add_widget(w); added.append(w); return w
+        def s(t, color="4fc3f7"): _add(self._section_label(t, color))
+        def f(k, label, default, filt="float"):
+            box, ti = self._field_widget(label, default, filt)
+            _add(box); d[k] = ti
         def sp(k, label, values, default):
-            box, spinner = self._spinner_row(label, values, default)
-            F.add_widget(box); fields[k] = spinner
-        def cb(k, label):
-            box, checkbox = self._checkbox_row(label)
-            F.add_widget(box); fields[k] = checkbox
+            box, spinner = self._spinner_widget(label, values, default)
+            _add(box); d[k] = spinner
+        def cb(k, label, default=False):
+            box, checkbox = self._checkbox_widget(label, default)
+            _add(box); d[k] = checkbox
 
-        s("Геометрия здания")
-        f("L_build", "Длина здания по осям, м", 120)
-        f("W_build", "Ширина здания, м", 48)
-        f("L_span",  "Пролёт фермы L, м", 24)
-        f("B_step",  "Шаг ферм B, м", 6)
-        sp("col_step", "Шаг колонн, м", ["6", "12"], "12")
-        f("h_rail",  "Уровень головки рельса, м", 8.0)
+        s(f"Пролёт {idx}", "80cbc4")
+        s("Геометрия пролёта")
+        f("L_span",    "Пролёт L, м", 24.0)
+        sp("B_step",   "Шаг ферм B, м", ["6", "12"], "6")
+        sp("col_step", "Шаг колонн, м", ["6", "12"], "6")
+        f("h_rail",    "УГР — уровень головки рельса, м", 8.0)
+        f("H_col_ov",  "Высота колонны (0=авто), м", 0.0)
 
-        s("Нагрузки (расчётные, кН/м²)")
-        f("Q_snow",   "Снег (Qснег)", 2.1)
-        f("Q_dust",   "Пыль (Qпыль)", 0.0)
-        f("Q_roof",   "Кровля (Qкровля)", 0.65)
-        f("Q_purlin", "Вес прогона (Qвес.прог.)", 0.35)
-        f("yc",       "Коэф. ответственности γc", 1.0)
+        s("Нагрузки пролёта")
+        f("Q_roof",   "Кровля, кН/м²", 0.30)
+        f("Q_purlin", "Прогоны, кН/м²", 0.25)
 
-        s("Стропильные фермы")
-        sp("truss_type", "Тип фермы", ["Уголки", "Двутавры", "Молодечно"], "Уголки")
-
-        s("Мостовой кран")
-        f("q_crane_t", "Грузоподъёмность крана, т", 50)
-        sp("n_cranes", "Кол-во кранов в пролёте", ["1", "2"], "1")
-        sp("with_pass", "Тормозные пути",
-           ["С проходом", "Без прохода"], "С проходом")
+        s("Конструкция")
+        sp("truss_type", "Тип ферм", TRUSS_TYPES, "Уголки")
+        sp("crane_mode", "Режим крана", CRANE_MODES, "Режим 1-6К")
+        f("q_crane_t", "Г/П крана, т", 50.0)
+        sp("n_cranes",  "Кол-во кранов", ["1", "2"], "1")
+        sp("with_pass", "Тормозные конструкции", ["С проходом", "Без прохода"], "С проходом")
 
         s("Фахверк")
-        f("rig_load", "Нагрузка на ригели, кг/м.п.", 0)
-        cb("has_post", "Наличие стойки фахверка (шаг 12 м)")
+        f("rig_load",   "Нагрузка на ригель, кг/м", 0.0)
+        cb("has_post",  "Стойка фахверка (шаг 12м)")
+        sp("bld_type",  "Тип здания (опоры труб)", BLD_TYPES, BLD_TYPES[0])
 
-        s("Тип здания (опоры трубопроводов)")
-        sp("bld_type", "Тип здания",
-           ["Основные производственные",
-            "Здания энергоносителей",
-            "Вспомогательные здания"],
-           "Основные производственные")
+        d["_widgets_in_F"] = added
+        self._span_blocks.append(d)
+        F.add_widget(self._btn_container)
+        self._update_span_buttons()
 
-        self._fields = fields
+    def _remove_span_block(self):
+        if len(self._span_blocks) <= 1: return
+        F = self._form
+        F.remove_widget(self._btn_container)
+        d = self._span_blocks.pop()
+        for w in d.get("_widgets_in_F", []):
+            if w.parent:
+                w.parent.remove_widget(w)
+        F.add_widget(self._btn_container)
+        self._update_span_buttons()
 
-    # ── Считать параметры из формы ───────────────────────
+    def _update_span_buttons(self):
+        n = len(self._span_blocks)
+        self._btn_rem.disabled = (n <= 1)
+        self._btn_add.disabled = (n >= 6)
 
-    def _get(self, key, default=0.0):
-        w = self._fields.get(key)
-        if w is None: return default
-        if isinstance(w, TextInput):
-            try: return float(w.text.replace(",", "."))
+    # ── Чтение параметров ────────────────────────────────
+
+    def _get_float(self, widget, default=0.0):
+        if isinstance(widget, TextInput):
+            try: return float(widget.text.replace(",", "."))
             except: return default
-        if isinstance(w, Spinner):
-            return w.text
-        if isinstance(w, CheckBox):
-            return w.active
         return default
 
+    def _get_text(self, widget, default=""):
+        if isinstance(widget, Spinner): return widget.text
+        if isinstance(widget, TextInput): return widget.text
+        return default
+
+    def _get_bool(self, widget):
+        if isinstance(widget, CheckBox): return widget.active
+        return False
+
     def _read_params(self):
-        col_step = int(self._get("col_step", "12"))
-        return {
-            "L_build":    self._get("L_build", 120),
-            "W_build":    self._get("W_build", 48),
-            "L_span":     self._get("L_span",  24),
-            "B_step":     self._get("B_step",  6),
-            "col_step":   col_step,
-            "h_rail":     self._get("h_rail",  8),
-            "Q_snow":     self._get("Q_snow",  2.1),
-            "Q_dust":     self._get("Q_dust",  0),
-            "Q_roof":     self._get("Q_roof",  0.65),
-            "Q_purlin":   self._get("Q_purlin", 0.35),
-            "yc":         self._get("yc",       1.0),
-            "truss_type": self._get("truss_type", "Уголки"),
-            "q_crane_t":  self._get("q_crane_t", 50),
-            "n_cranes":   int(self._get("n_cranes", "1")),
-            "with_pass":  self._get("with_pass", "С проходом") == "С проходом",
-            "rig_load":   self._get("rig_load", 0),
-            "has_post":   bool(self._get("has_post")) and col_step == 12,
-            "bld_type":   self._get("bld_type", "Основные производственные"),
+        gf = self._global_fields
+        gp = {
+            "L_build": self._get_float(gf.get("L_build"), 120),
+            "Q_snow":  self._get_float(gf.get("Q_snow"),  2.1),
+            "Q_dust":  self._get_float(gf.get("Q_dust"),  0.0),
+            "Q_tech":  self._get_float(gf.get("Q_tech"),  0.0),
+            "yc":      self._get_float(gf.get("yc"),      1.0),
         }
+        spans = []
+        for d in self._span_blocks:
+            cs = int(self._get_text(d.get("col_step"), "6"))
+            spans.append({
+                "L_span":     self._get_float(d.get("L_span"),    24.0),
+                "B_step":     int(self._get_text(d.get("B_step"), "6")),
+                "col_step":   cs,
+                "h_rail":     self._get_float(d.get("h_rail"),    8.0),
+                "H_col_ov":   self._get_float(d.get("H_col_ov"), 0.0),
+                "Q_roof":     self._get_float(d.get("Q_roof"),    0.30),
+                "Q_purlin":   self._get_float(d.get("Q_purlin"),  0.25),
+                "truss_type": self._get_text(d.get("truss_type"), "Уголки"),
+                "crane_mode": self._get_text(d.get("crane_mode"), "Режим 1-6К"),
+                "q_crane_t":  self._get_float(d.get("q_crane_t"), 50.0),
+                "n_cranes":   int(self._get_text(d.get("n_cranes"), "1")),
+                "with_pass":  self._get_text(d.get("with_pass"), "С проходом") == "С проходом",
+                "rig_load":   self._get_float(d.get("rig_load"),  0.0),
+                "has_post":   self._get_bool(d.get("has_post")) and cs == 12,
+                "bld_type":   self._get_text(d.get("bld_type"),  BLD_TYPES[0]),
+            })
+        return gp, spans
 
     # ── Навигация и действия ─────────────────────────────
 
@@ -651,99 +975,142 @@ class MetalApp(App):
         self.sm.current = "input"
 
     def do_reset(self):
-        self.sm.current = "input"
+        self._build_form()
 
     def do_calculate(self):
-        Clock.schedule_once(self._run_calc, 0.1)
+        Clock.schedule_once(self._run_calc, 0.05)
 
     def _run_calc(self, dt):
         try:
-            params = self._read_params()
-            res = calculate(params)
-            self._show_results(res)
+            gp, spans = self._read_params()
+            res = calculate(gp, spans)
+            txt_markup, txt_plain = self._format_results(res, gp, spans)
+            self._last_result_text = txt_plain
+            screen = self.sm.get_screen("result")
+            screen.ids.result_text.text = txt_markup
+            self.sm.current = "result"
         except Exception:
             tb = traceback.format_exc()
             screen = self.sm.get_screen("result")
-            screen.ids.result_text.text = (
-                "[color=ff6666]ОШИБКА РАСЧЁТА:[/color]\n" + tb
-            )
+            screen.ids.result_text.text = "[color=ff6666]ОШИБКА:[/color]\n" + tb
             self.sm.current = "result"
 
-    def _show_results(self, res):
-        lines = []
-        S = "─" * 38
+    def do_save_results(self):
+        if not self._last_result_text:
+            return
+        try:
+            path = export_to_file(self._last_result_text)
+            screen = self.sm.get_screen("result")
+            short = os.path.basename(path)
+            # Append save notification
+            screen.ids.result_text.text += (
+                f"\n\n[color=88ff88]Сохранено: {short}[/color]"
+            )
+        except Exception as e:
+            screen = self.sm.get_screen("result")
+            screen.ids.result_text.text += f"\n\n[color=ff6666]Ошибка сохранения: {e}[/color]"
 
-        def h(t): lines.append(f"\n[b][color=4fc3f7]{t}[/color][/b]\n{S}")
-        def r(label, val): lines.append(f"  {label:<28}{val}")
+    # ── Форматирование результатов ────────────────────────
+
+    def _format_results(self, res, gp, spans):
+        """Возвращает (markup_str, plain_str)."""
+        SEP  = "─" * 40
+        lines_m = []  # markup
+        lines_p = []  # plain
+
+        def h(t):
+            lines_m.append(f"\n[b][color=4fc3f7]{t}[/color][/b]\n{SEP}")
+            lines_p.append(f"\n{t}\n{SEP}")
+
+        def r(label, val):
+            lines_m.append(f"  {label:<30}{val}")
+            lines_p.append(f"  {label:<30}{val}")
 
         it = res["итого"]
-        lines.append(f"[b][size=16]РЕЗУЛЬТАТЫ[/size][/b]")
-        lines.append(S)
-        lines.append(f"[b]ИТОГО М1:[/b]  {it['М1_т']} т  ({it['М1_кгм2']} кг/м²)")
-        lines.append(f"[b]ИТОГО М2:[/b]  {it['М2_т']} т  ({it['М2_кгм2']} кг/м²)")
+        N  = len(spans)
+        now = datetime.now().strftime("%d.%m.%Y %H:%M")
+
+        # Шапка
+        lines_m.append(f"[b][size=16]МЕТАЛЛОЁМКОСТЬ ЗДАНИЙ[/size][/b]")
+        lines_p.append("МЕТАЛЛОЁМКОСТЬ ЗДАНИЙ")
+        lines_m.append(f"[color=aaaaaa]{now}  Пролётов: {N}[/color]")
+        lines_p.append(f"{now}  Пролётов: {N}")
+        lines_m.append(SEP)
+        lines_p.append(SEP)
+
+        lines_m.append(f"[b][color=ffdd44]ИТОГО М1:  {it['М1_т']} т  ({it['М1_кгм2']} кг/м²)[/color][/b]")
+        lines_m.append(f"[b][color=ffdd44]ИТОГО М2:  {it['М2_т']} т  ({it['М2_кгм2']} кг/м²)[/color][/b]")
+        lines_m.append(f"[b]ДИАПАЗОН:  {it['min_т']} — {it['max_т']} т[/b]")
+        lines_m.append(f"[color=aaaaaa]Площадь пола: {it['S_floor']} м²[/color]")
+        lines_p.append(f"ИТОГО М1:  {it['М1_т']} т  ({it['М1_кгм2']} кг/м²)")
+        lines_p.append(f"ИТОГО М2:  {it['М2_т']} т  ({it['М2_кгм2']} кг/м²)")
+        lines_p.append(f"ДИАПАЗОН:  {it['min_т']} — {it['max_т']} т")
+        lines_p.append(f"Площадь пола: {it['S_floor']} м²")
 
         h("1. ПРОГОНЫ [М1]")
-        pr = res["прогоны"]
-        r("Профиль:", pr["профиль"])
-        r("Нагрузка, т/м:", pr["нагрузка_тм"])
-        r("Расход, кг/м²:", pr["расход_кгм2"])
-        r("Масса, т:", pr["масса_т"])
+        r("Масса, т:", res["прогоны"]["масса_общая_т"])
+        for row in res["прогоны"]["по_пролётам"]:
+            r(f"  Пролёт {row['пролёт']} ({row['профиль']}):", f"{row['масса_т']} т  ({row['расход_кгм2']} кг/м²)")
 
         h("2. СТРОПИЛЬНЫЕ ФЕРМЫ")
-        fm = res["фермы"]
-        r("Нагрузка, т/м:", fm["нагрузка_тм"])
-        r("Расход М1, кг/м²:", fm["М1"])
-        r("Расход М2, кг/м²:", fm["М2"])
+        r("Масса М1, т:", res["фермы"]["масса_общая_т_М1"])
+        r("Масса М2, т:", res["фермы"]["масса_общая_т_М2"])
+        for row in res["фермы"]["по_пролётам"]:
+            r(f"  Пролёт {row['пролёт']}:", f"М1={row['G_М1_т']} М2={row['G_М2_т']} т")
 
         h("3. СВЯЗИ ПОКРЫТИЯ [М2]")
-        sv = res["связи"]
-        r("Расход, кг/м²:", sv["расход_кгм2"])
-        r("Масса, т:", sv["масса_т"])
+        r("Масса, т:", res["связи_покрытия"]["масса_общая_т"])
+        r("Расход, кг/м²:", res["связи_покрытия"]["расход_кгм2"])
 
         h("4. ПОДСТРОПИЛЬНЫЕ ФЕРМЫ")
-        psf = res.get("подстроп", {})
+        psf = res["подстропильные_фермы"]
         if "примечание" in psf:
-            lines.append(f"  {psf['примечание']}")
+            lines_m.append(f"  {psf['примечание']}")
+            lines_p.append(f"  {psf['примечание']}")
         else:
-            r("R, кН:", psf.get("R_кн",""))
-            r("Расход М1, кг/м²:", psf.get("М1",""))
-            r("Расход М2, кг/м²:", psf.get("М2",""))
+            r("Масса М1, т:", psf.get("масса_общая_т_М1", "н/п"))
+            r("Масса М2, т:", psf.get("масса_общая_т_М2", "н/п"))
 
         h("5. ПОДКРАНОВЫЕ БАЛКИ")
-        pb = res["подкрановые"]
-        r("Масса 1 балки (М1), т:", pb["G_1пб_т"])
-        r("Балка (таблица), кг/м:", pb["балка_кгм"])
-        r("Тормоза (таблица), кг/м:", pb["тормоз_кгм"])
-        r("Расход М1, кг/м²:", pb["М1"])
-        r("Расход М2, кг/м²:", pb["М2"])
+        pb = res["подкрановые_балки"]
+        r("Масса М1, т:", pb["масса_общая_т_М1"])
+        r("Масса М2, т:", pb["масса_общая_т_М2"])
+        for row in pb["ряды_колонн"]:
+            r(f"  {row['ряд']} (Q={row['q']}т):", f"{row['G_М1_т']} т")
 
         h("6. КОЛОННЫ [М1]")
         kl = res["колонны"]
-        r("Кол-во колонн:", kl["n"])
-        r("ΣFв, кН:", kl["ΣFv"])
-        r("ΣFн, кН:", kl["ΣFn"])
-        r("Масса 1 кол., кг:", kl["масса_1_кг"])
+        r("Масса, т:", kl["масса_общая_т"])
         r("Расход, кг/м²:", kl["расход_кгм2"])
-        r("Масса, т:", kl["масса_т"])
+        for h_row in kl.get("высоты_пролётов", []):
+            r(f"  Пролёт {h_row['пролёт']} H_кол:", f"{h_row['H_full']} м")
+        for c_row in kl["по_рядам"]:
+            r(f"  {c_row['ряд']}:", f"1 кол.={c_row['масса_1_кг']} кг  ряд={c_row['масса_ряд_т']} т")
 
         h("7. ФАХВЕРК [М2]")
-        fh = res.get("фахверк", {})
-        r("Расход, кг/м² стен:", fh.get("расход_кгм2_стен",""))
-        r("Масса, т:", fh.get("масса_т",""))
+        fh = res["фахверк"]
+        r("Масса, т:", fh["масса_общая_т"])
+        r("Площадь стен, м²:", fh["площадь_стен_м2"])
 
         h("8. ОГРАЖДЕНИЕ (справочно)")
         og = res["ограждение"]
-        r("Площадь стен, м²:", og["стены_м2"])
-        r("Площадь кровли, м²:", og["кровля_м2"])
+        r("Стены, м²:", og["стены_м2"])
+        r("Кровля, м²:", og["кровля_м2"])
 
         h("9. ОПОРЫ ТРУБОПРОВОДОВ [М2]")
-        op = res.get("опоры", {})
-        r("Расход, кг/м²:", op.get("расход_кгм2",""))
-        r("Масса, т:", op.get("масса_т",""))
+        op = res["опоры_трубопроводов"]
+        r("Масса, т:", op["масса_общая_т"])
+        r("Расход, кг/м²:", op["расход_кгм2"])
 
-        screen = self.sm.get_screen("result")
-        screen.ids.result_text.text = "\n".join(lines)
-        self.sm.current = "result"
+        h("ПАРАМЕТРЫ РАСЧЁТА")
+        r("Длина здания, м:", gp["L_build"])
+        r("Q_снег, кН/м²:", gp["Q_snow"])
+        r("γc:", gp["yc"])
+        for i, sp in enumerate(spans):
+            lines_m.append(f"  [color=80cbc4]Пролёт {i+1}:[/color] L={sp['L_span']}м B={sp['B_step']}м  кран={sp['q_crane_t']}т {sp['crane_mode']}")
+            lines_p.append(f"  Пролёт {i+1}: L={sp['L_span']}м B={sp['B_step']}м  кран={sp['q_crane_t']}т {sp['crane_mode']}")
+
+        return "\n".join(lines_m), "\n".join(lines_p)
 
 
 if __name__ == "__main__":
