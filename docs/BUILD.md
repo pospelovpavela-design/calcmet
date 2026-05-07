@@ -53,6 +53,30 @@ pyinstaller metal_macos.spec
 
 ---
 
+## iOS / iPhone
+
+### Локально через Xcode
+
+```bash
+./build_ios_local.sh
+```
+
+Скрипт создаёт `.venv-ios`, устанавливает `cython` и `kivy-ios`, собирает Kivy для `iphoneos-arm64` и `iphonesimulator-arm64`, создаёт Xcode-проект и открывает его.
+
+Дальше в Xcode:
+
+1. Подключить iPhone кабелем.
+2. В Signing & Capabilities выбрать Team.
+3. При необходимости задать уникальный Bundle Identifier.
+4. Выбрать iPhone в списке устройств.
+5. Нажать `Cmd+R`.
+
+### Через GitHub Actions
+
+Workflow `Build iOS (MetalCalc)` собирает приложение для iOS Simulator. Подписанный IPA для реального iPhone создаётся только при наличии Apple-секретов в репозитории.
+
+---
+
 ## Структура spec-файлов
 
 | Файл | Назначение |

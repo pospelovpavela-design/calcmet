@@ -307,13 +307,15 @@ pyinstaller launcher_win.spec
 ### iOS (iPhone/iPad)
 
 ```bash
-# Локальная сборка (нужен Xcode + conda-среда kivy-ios):
+# Локальная сборка под iPhone (нужен Xcode и Homebrew):
 ./build_ios_local.sh
 ```
 
 Подробнее — [build_ios_local.sh](build_ios_local.sh) и [.github/workflows/build_ios.yml](.github/workflows/build_ios.yml).
 
-Сборка iOS (симулятор) автоматически запускается через GitHub Actions. Подписанный IPA требует настройки секретов Apple в репозитории.
+Скрипт создаёт локальное окружение `.venv-ios`, собирает `iphoneos-arm64` и `iphonesimulator-arm64`, затем открывает Xcode-проект. Для установки на iPhone выберите свой Team в Signing & Capabilities, подключите iPhone и запустите `Cmd+R`.
+
+Сборка iOS для симулятора автоматически запускается через GitHub Actions. Подписанный IPA для реального iPhone требует настройки секретов Apple в репозитории.
 
 ---
 

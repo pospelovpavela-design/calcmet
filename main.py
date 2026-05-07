@@ -706,8 +706,9 @@ from kivy.clock          import Clock
 from kivy.properties     import StringProperty, BooleanProperty
 from kivy.utils          import platform
 
-# Safe-area top padding для iPhone с чёлкой / Dynamic Island
+# Safe-area padding для iPhone с чёлкой / Dynamic Island и Home Indicator.
 _SAFE_TOP = dp(50) if platform == "ios" else 0
+_SAFE_BOTTOM = dp(34) if platform == "ios" else 0
 _BLUE     = (0.18, 0.45, 0.8, 1)
 _DARK     = (0.13, 0.13, 0.13, 1)
 _GRAY     = (0.22, 0.22, 0.22, 1)
@@ -814,6 +815,10 @@ ScreenManager:
                 width: dp(90)
                 background_color: 0.35, 0.35, 0.35, 1
                 on_release: app.do_reset()
+        Widget:
+            id: safe_bottom
+            size_hint_y: None
+            height: 0
 
 <ResultScreen>:
     name: "result"
@@ -866,6 +871,10 @@ ScreenManager:
                 width: dp(90)
                 background_color: 0.35, 0.35, 0.35, 1
                 on_release: app.go_back()
+        Widget:
+            id: safe_bottom_r
+            size_hint_y: None
+            height: 0
 """
 
 
@@ -892,6 +901,8 @@ class MetalApp(App):
             # Safe area
             inp.ids.safe_top.height  = _SAFE_TOP
             res.ids.safe_top_r.height = _SAFE_TOP
+            inp.ids.safe_bottom.height = _SAFE_BOTTOM
+            res.ids.safe_bottom_r.height = _SAFE_BOTTOM
 
             self._form = inp.ids.form
             self._span_blocks = []   # list of dicts: {key: widget}
@@ -993,6 +1004,9 @@ class MetalApp(App):
         def sp(d, k, label, values, default):
             box, spinner = self._spinner_widget(label, values, default)
             F.add_widget(box); d[k] = spinner
+        def cb(d, k, label, default=False):
+            box, checkbox = self._checkbox_widget(label, default)
+            F.add_widget(box); d[k] = checkbox
 
         gf = self._global_fields
         s("Параметры здания")

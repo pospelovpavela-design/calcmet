@@ -1,17 +1,18 @@
 # Файл восстановления контекста — MetalCalc
 
-> Создан: 2026-03-14 · Обновлён после исправления αпб и kпб подкрановых балок М1
+> Создан: 2026-03-14 · Обновлён 2026-05-07 после успешного запуска iOS-приложения на iPhone
 
 ---
 
 ## Состояние ветки
 
-Ветка `main`, синхронизирована с `origin/main`. Все коммиты запушены.
+Ветка `main`. В этой сессии подготовлены и будут запушены правки для iPhone-сборки.
 
 ### Коммиты этой сессии (новейший первый)
 
 | Хэш | Описание |
 |---|---|
+| `pending` | iOS: fix iPhone build/run setup and startup crash |
 | `17b70f9` | docs: update verification plan — Block 3 formula analysis |
 | `e11d888` | Tests: fix 5 failing + add etalon tests for blocks 1-4 |
 | `07d267a` | Fix: calculation result not shown, save does nothing |
@@ -21,6 +22,32 @@
 ---
 
 ## Что сделано в этой сессии
+
+### 0. iOS/iPhone: приложение собрано и запустилось на iPhone (2026-05-07)
+
+Подтверждено пользователем: приложение запустилось на iPhone после исправлений.
+
+Сделанные правки:
+- `main.py`: добавлен нижний safe-area для iPhone Home Indicator.
+- `main.py`: исправлен startup crash `NameError: name 'cb' is not defined` в `_build_form()`.
+- `build_ios_local.sh`: сборка переведена на локальный `.venv-ios`, автодоустановка `cython` и `kivy-ios`.
+- `build_ios_local.sh`: сборка Kivy явно для `iphoneos-arm64` и `iphonesimulator-arm64`.
+- `build_ios_local.sh`: добавлен патч установленного recipe `sdl2_mixer` для бага `NameError: join is not defined`.
+- `build_ios_local.sh`: Xcode-проект настраивается как iPhone-only, deployment target 15.0, Bundle ID `ru.pospelov.metalcalc`.
+- `build_ios_local.sh`: build phase `rsync` теперь исключает `.git/`, `.github/`, `.venv/`, `.venv-ios/`, `.pytest_cache/`, `__pycache__/`, `kivy-ios-build/` и использует `--delete-excluded`, чтобы не копировать сборочные артефакты внутрь `YourApp`.
+- `.github/workflows/build_ios.yml`: синхронизирована iOS-сборка CI с локальными настройками.
+- `.gitignore`: добавлены `.venv-ios/` и `kivy-ios-build/`.
+- `README.md`, `docs/BUILD.md`: обновлены инструкции по iPhone/Xcode.
+
+Важные ручные шаги в Xcode:
+- Открывать проект: `kivy-ios-build/metalcalc-ios/metalcalc.xcodeproj`.
+- `TARGETS -> metalcalc -> Signing & Capabilities -> Team`: выбрать Apple ID.
+- Bundle Identifier: `ru.pospelov.metalcalc` или другой уникальный, если Xcode попросит.
+- После правок build phase: `Product -> Clean Build Folder` (`Shift+Cmd+K`), затем `Cmd+R`.
+
+Нерелевантные untracked файлы не трогать и не коммитить без отдельного запроса:
+- `Проверка KNOWLEDGE_BASE_дополнена (1).docx`
+- `методичка/`
 
 ### 1. Исправлен crash при запуске iOS (`b42bf2d`)
 **Симптом:** `AttributeError: 'MetalApp' object has no attribute '_btn_container'`
@@ -86,7 +113,7 @@
 
 ## Что нужно сделать следующим
 
-1. **iOS**: пересобрать Xcode проект с `main.py` (в Xcode: ⇧⌘K → ⌘R)
+1. **iOS**: запуск на iPhone подтверждён. При следующих изменениях пересобрать Xcode проект: `Shift+Cmd+K` → `Cmd+R`.
 
 2. **Блок 3 закрыт** — αпб и kпб=1.2 исправлены по методике, тесты проходят.
 

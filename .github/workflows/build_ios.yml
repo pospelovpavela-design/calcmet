@@ -30,6 +30,10 @@ jobs:
       run: |
         brew install autoconf automake libtool pkg-config cmake
         pip install cython kivy-ios
+        SDL2_MIXER_RECIPE=$(python -c 'import pathlib, kivy_ios; print(pathlib.Path(kivy_ios.__file__).parent / "recipes" / "sdl2_mixer" / "__init__.py")')
+        if [ -f "$SDL2_MIXER_RECIPE" ] && ! grep -q "from os.path import join" "$SDL2_MIXER_RECIPE"; then
+          perl -0pi -e 's/from kivy_ios\.toolchain import Recipe, shprint\n/from kivy_ios.toolchain import Recipe, shprint\nfrom os.path import join\n/' "$SDL2_MIXER_RECIPE"
+        fi
 
     # ── 4. Кэш скомпилированных iOS-фреймворков ───────────
     #    Первая сборка: ~60 мин. Повторные: секунды.
@@ -46,21 +50,30 @@ jobs:
       run: |
         mkdir -p ~/kivy-ios-workspace
         cd ~/kivy-ios-workspace
-        toolchain build python3 kivy
+        mkdir -p ~/kivy-ios-workspace/xcode-home
+        HOME=~/kivy-ios-workspace/xcode-home toolchain build python3 kivy --platform iphoneos-arm64 --platform iphonesimulator-arm64
 
     # ── 6. Создать Xcode-проект из main.py ────────────────
     - name: Create Xcode project
       run: |
         mkdir -p ~/kivy-ios-workspace
         cd ~/kivy-ios-workspace
-        toolchain create MetalCalc $GITHUB_WORKSPACE
+        toolchain create metalcalc $GITHUB_WORKSPACE
+        XCODEPROJ=$(find ~/kivy-ios-workspace/metalcalc-ios -maxdepth 1 -name "*.xcodeproj" -print -quit)
+        PBXPROJ="$XCODEPROJ/project.pbxproj"
+        perl -0pi -e 's/TARGETED_DEVICE_FAMILY = "[^"]+";/TARGETED_DEVICE_FAMILY = 1;/g; s/TARGETED_DEVICE_FAMILY = [^;]+;/TARGETED_DEVICE_FAMILY = 1;/g' "$PBXPROJ"
+        perl -0pi -e 's/IPHONEOS_DEPLOYMENT_TARGET = [^;]+;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' "$PBXPROJ"
+        INFO_PLIST=$(find ~/kivy-ios-workspace/metalcalc-ios -maxdepth 1 -name "*-Info.plist" -print -quit)
+        /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ru.pospelov.metalcalc" "$INFO_PLIST"
+        /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName MetalCalc" "$INFO_PLIST"
+        /usr/libexec/PlistBuddy -c "Set :CFBundleName MetalCalc" "$INFO_PLIST"
 
     # ── 7. Сборка для симулятора (без подписи) ────────────
     - name: Build for iOS Simulator
       run: |
         xcodebuild \
-          -project ~/kivy-ios-workspace/MetalCalc-ios/MetalCalc.xcodeproj \
-          -scheme MetalCalc \
+          -project ~/kivy-ios-workspace/metalcalc-ios/metalcalc.xcodeproj \
+          -scheme metalcalc \
           -sdk iphonesimulator \
           -configuration Release \
           -derivedDataPath DerivedData \
@@ -68,7 +81,7 @@ jobs:
 
     - name: Zip simulator .app
       run: |
-        find DerivedData -name "MetalCalc.app" -type d | head -1 | \
+        find DerivedData -name "metalcalc.app" -type d | head -1 | \
           xargs -I{} zip -r MetalCalc-Simulator.zip "{}"
 
     - name: Upload Simulator build
@@ -83,7 +96,7 @@ jobs:
       if: failure()
       run: |
         ls -la ~/kivy-ios-workspace/ 2>/dev/null || echo "workspace not found"
-        ls -la ~/kivy-ios-workspace/MetalCalc-ios/ 2>/dev/null || echo "xcodeproj not found"
+        ls -la ~/kivy-ios-workspace/metalcalc-ios/ 2>/dev/null || echo "xcodeproj not found"
 
     # ══════════════════════════════════════════════════════
     # ПОДПИСАННАЯ СБОРКА — только если заданы секреты Apple
@@ -127,8 +140,8 @@ jobs:
         APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       run: |
         xcodebuild \
-          -project ~/kivy-ios-workspace/MetalCalc-ios/MetalCalc.xcodeproj \
-          -scheme MetalCalc \
+          -project ~/kivy-ios-workspace/metalcalc-ios/metalcalc.xcodeproj \
+          -scheme metalcalc \
           -sdk iphoneos \
           -configuration Release \
           -archivePath MetalCalc.xcarchive \
