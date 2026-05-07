@@ -6,6 +6,7 @@
 """
 
 import os
+import math
 from typing import Dict, Optional, Tuple, Any, List
 from dataclasses import dataclass
 
@@ -43,6 +44,8 @@ class SpanParams:
     fachwerk_load: float   # Нагрузка на ригеля фахверка, кг/м.п.
     fachwerk_post: bool    # Стойка фахверка (только при шаге 12м)
     building_type: str     # Тип здания для опор трубопроводов
+    Q_tech: float = 1.0    # Технологическая нагрузка, кН/м2
+    purlin_step: float = 3.0  # Шаг прогонов, м
 
 
 class InputParams:
@@ -87,7 +90,7 @@ ALPHA_PB_TABLE = {
 # Таблица q (нормативные эквивалентные нагрузки кранов), кН/м
 Q_CRANE_TABLE = {10: 80, 20: 120, 30: 160, 50: 220, 80: 280, 100: 320, 125: 360, 200: 450, 250: 500, 300: 550}
 
-# Таблица прогонов: (q_pr кН/м, m_pr кг) для пролета 6м и 12м
+# Таблица прогонов: (q_pr т/м, m_pr кг) для пролета 6м и 12м
 PROGON_6M = [(0.45, 110.4), (0.65, 126), (0.9, 144), (1.25, 166.2), (1.7, 190.8), (2.25, 288), (3.0, 332.4), (3.8, 381.6),
              (1.9, 197.4), (2.2, 219.6), (2.3, 256.2), (2.7, 295.2), (3.4, 321.6), (4.0, 366), (5.8, 450.6), (6.5, 493.2), (9.0, 576.6)]
 PROGON_12M = [(0.15, 381.6), (0.3, 576), (0.45, 664.8), (0.65, 763.2), (0.2, 394.8), (0.3, 439.2), (0.4, 519.6), (0.5, 590.4),
@@ -101,6 +104,12 @@ def _interpolate_table(table: list, q_pr: float) -> float:
         if q_pr <= q:
             return m
     return sorted_t[-1][1] if sorted_t else 0
+
+
+def _get_alpha_pf(R_kn: float) -> float:
+    """Коэффициент веса подстропильной фермы по таблице 4.1 методики."""
+    Rf = max(100.0, min(float(R_kn), 800.0))
+    return (Rf - 100.0) * 0.0002 + 0.044
 
 
 def _get_alpha_pb(Q: float, mode: str = '7К-8К') -> float:
@@ -181,15 +190,25 @@ class CalculatorLogic:
     def calc_progony(self, sp: SpanParams, length: float) -> Dict[str, Any]:
         """Прогоны: только Метод 1."""
         g_sv_n = 0.2 if sp.truss_step_B == 6 else 0.3
-        a_pr = 3.0  # шаг прогонов, м (стандартный для обоих типов ферм)
-        q_pr = (sp.Q_roof + g_sv_n * GAMMA_F + sp.Q_snow * GAMMA_F_SNOW + sp.Q_dust * GAMMA_F_DUST + 1.0 * GAMMA_C_TECH) * a_pr * sp.yc
+        a_pr = max(float(getattr(sp, 'purlin_step', 3.0)), 0.1)
+        q_pr_kn_m = (sp.Q_roof + g_sv_n * GAMMA_F + sp.Q_snow * GAMMA_F_SNOW + sp.Q_dust * GAMMA_F_DUST + sp.Q_tech * GAMMA_C_TECH) * a_pr * sp.yc
+        q_pr_tm = q_pr_kn_m / 9.81
         table = PROGON_6M if sp.truss_step_B == 6 else PROGON_12M
-        m_pr = _interpolate_table(table, q_pr)
-        # Количество прогонов в одном отсеке (шаг ферм B):
-        # span_L / a_pr — число пролётов между прогонами, +1 — включая оба крайних прогона
-        n_pr = int(sp.span_L / a_pr) + 1
+        m_pr = _interpolate_table(table, q_pr_tm)
+        # Количество прогонов в одном отсеке:
+        # основные ряды по шагу a_pr плюс 3 дополнительных ряда в коньке и по краям.
+        n_pr = math.ceil(sp.span_L / a_pr) + 3
         g_pr_kg_m2 = m_pr * n_pr / (sp.span_L * sp.truss_step_B)
-        return {'method': 1, 'kg_m2': g_pr_kg_m2, 'total_kg': g_pr_kg_m2 * length * sp.span_L, 'm_pr': m_pr, 'n_pr': n_pr}
+        return {
+            'method': 1,
+            'kg_m2': g_pr_kg_m2,
+            'total_kg': g_pr_kg_m2 * length * sp.span_L,
+            'm_pr': m_pr,
+            'n_pr': n_pr,
+            'purlin_step': a_pr,
+            'q_pr_kn_m': q_pr_kn_m,
+            'q_pr_tm': q_pr_tm,
+        }
 
     def calc_svyazi_pokrytiya(self, sp: SpanParams, length: float) -> Dict[str, Any]:
         """Связи по покрытию: только Метод 2."""
@@ -208,10 +227,17 @@ class CalculatorLogic:
         g_n = sp.Q_roof + g_pr_kN + g_f_n + sp.Q_snow + sp.Q_dust + 1.0
         alpha_f = 1.4
         G_f_1_kN = (g_n * sp.truss_step_B / 1000 + 0.018) * alpha_f * sp.span_L ** 2 / 0.85 * sp.yc
-        G_f_1 = G_f_1_kN * 100  # кН -> кг
+        G_f_1 = G_f_1_kN / 9.81 * 1000
         g_f_1 = G_f_1 / (sp.truss_step_B * sp.span_L)
         n_trusses = int(length / sp.truss_step_B) + 1
-        result = {'method1_kg': G_f_1, 'method1_kg_m2': g_f_1, 'total_kg': G_f_1 * n_trusses}
+        result = {
+            'method1_kg': G_f_1,
+            'method1_kN': G_f_1_kN,
+            'method1_kg_m2': g_f_1,
+            'total_kg': G_f_1 * n_trusses,
+            'g_n': g_n,
+            'alpha_f': alpha_f,
+        }
         if self._coverage_data and sp.truss_type in ('Двутавры', 'Молодечно'):
             q_obsh = ((sp.Q_snow + sp.Q_dust + sp.Q_roof + g_pr) / sp.truss_step_B) * sp.yc * 1000 / 9.81
             fermy = self._coverage_data.get('fermy', {})
@@ -239,13 +265,18 @@ class CalculatorLogic:
 
     def calc_podstropilnye(self, sp: SpanParams, length: float, g_n: float, g_f: float) -> Dict[str, Any]:
         """Подстропильные фермы: Метод 1 и 2. R = g_n * B * L / 2."""
-        if sp.column_step != 12:
-            return {'method': 0, 'total_kg': 0, 'note': 'Только при шаге колонн 12 м'}
-        R = g_n * sp.column_step * sp.span_L / 2
-        alpha_pf = (R - 100) * 0.0002 + 0.044 if 100 <= R <= 400 else (0.044 if R < 100 else 0.104)
+        if sp.column_step != 12 or sp.truss_step_B >= sp.column_step:
+            return {'method': 0, 'total_kg': 0, 'note': 'Только при шаге колонн 12 м и шаге ферм меньше шага колонн'}
+        R = g_n * sp.truss_step_B * sp.span_L / 2
+        alpha_pf = _get_alpha_pf(R)
         G_pf_1_kN = alpha_pf * sp.column_step ** 2
-        G_pf_1 = G_pf_1_kN * 100  # кН -> кг
-        result = {'method1_kg': G_pf_1, 'method1_kg_m2': G_pf_1 * 2 / (sp.column_step * sp.span_L)}
+        G_pf_1 = G_pf_1_kN / 9.81 * 1000
+        result = {
+            'method1_kg': G_pf_1,
+            'method1_kg_m2': G_pf_1 * 2 / (sp.column_step * sp.span_L),
+            'R_kn': R,
+            'alpha_pf': alpha_pf,
+        }
         if self._coverage_data:
             podstr = self._coverage_data.get('podstropilnye', {})
             R_round = min([r for r in podstr.keys() if r >= R], default=list(podstr.keys())[-1] if podstr else 144)
@@ -327,14 +358,22 @@ class CalculatorLogic:
         # H_F — заглубление базы ниже ±0.000
         H_n = sp.rail_level - h_b - h_r + H_F
         G_st_v = G_ST * (H_v * 1.0 + H_SH) * B
-        sum_F_v = (sp.Q_roof + g_pr + g_f + sp.Q_snow + sp.Q_dust + 1.0) * B * sp.span_L / 2 + G_st_v
+        sum_F_v = (sp.Q_roof + g_pr + g_f + sp.Q_snow + sp.Q_dust + sp.Q_tech) * B * sp.span_L / 2 + G_st_v
+        g_pf_kN = 0.0
         if sp.column_step == 12 and g_pf > 0:
-            sum_F_v += g_pf / 100 * 1.05  # g_pf в кг, переводим в кН
+            g_pf_kN = g_pf / 100 * 1.05  # g_pf в кг, переводим в кН
+            sum_F_v += g_pf_kN
         G_kv_kN = (sum_F_v * RHO * PSI_K_TOP * H_v / K_M_TOP) / RY
         G_kv = G_kv_kN * 100  # кН -> кг
         G_st_n = G_ST * (H_n - H_F) * 1 * B
+        alpha_pb = _get_alpha_pb(sp.crane_capacity, sp.crane_mode)
         q_c = Q_CRANE_TABLE.get(min([k for k in Q_CRANE_TABLE if k >= sp.crane_capacity], default=300), 320)
-        Dmax = q_c * B * 1.1 * 0.85 * 1.0
+        pb_kgm = G_pb / max(B, 0.1)
+        Dmax_qeq = q_c * B
+        Dmax_rail = (G_pb / 1000.0) * B
+        # Вклад балки берём как табличную массу балки на 1 м, пересчитанную через αпб.
+        Dmax_beam = pb_kgm * alpha_pb * B / 100.0
+        Dmax = Dmax_qeq + Dmax_rail + Dmax_beam
         sum_F_n = sum_F_v + Dmax + G_pb / 100 + G_st_n + G_kv_kN
         G_kn_kN = (sum_F_n * RHO * PSI_K_BOT * H_n / K_M_BOT) / RY
         G_kn = G_kn_kN * 100  # кН -> кг
@@ -342,7 +381,40 @@ class CalculatorLogic:
         n_cols_per_row = int(length / B) + 1
         n_cols = n_cols_per_row * 2  # два ряда колонн (крайние оси)
         total = G_k * n_cols
-        return {'method': 1, 'kg_per_column': G_k, 'total_kg': total, 'kg_m2': total / (length * sp.span_L)}
+        return {
+            'method': 1,
+            'kg_per_column': G_k,
+            'total_kg': total,
+            'kg_m2': total / (length * sp.span_L),
+            'B': B,
+            'H2': H2,
+            'H_v': H_v,
+            'H_n': H_n,
+            'h_b': h_b,
+            'h_r': h_r,
+            'G_st_v': G_st_v,
+            'G_st_n': G_st_n,
+            'sum_F_v_kN': sum_F_v,
+            'sum_F_n_kN': sum_F_n,
+            'G_kv_kN': G_kv_kN,
+            'G_kn_kN': G_kn_kN,
+            'G_kv_kg': G_kv,
+            'G_kn_kg': G_kn,
+            'q_c': q_c,
+            'alpha_pb': alpha_pb,
+            'Dmax_qeq_kN': Dmax_qeq,
+            'Dmax_rail_kN': Dmax_rail,
+            'Dmax_beam_kN': Dmax_beam,
+            'Dmax_kN': Dmax,
+            'SFn_SFv_kN': sum_F_v,
+            'SFn_Dmax_kN': Dmax,
+            'SFn_Gpb_kN': G_pb / 100,
+            'SFn_Gwl_kN': G_st_n,
+            'SFn_Gcu_kN': G_kv_kN,
+            'SFn_kN': sum_F_n,
+            'G_pb_kg': G_pb,
+            'g_pf_kN': g_pf_kN,
+        }
 
     def calc_fachwerk(self, spans: List[SpanParams], length: float) -> Dict[str, Any]:
         """Фахверк: только Метод 2. Торцы — все пролёты, продольные — только крайние."""
@@ -409,7 +481,7 @@ class CalculatorLogic:
         # 4. Подстропильные (g_n в кН/м²)
         g_pr_kN = g_pr / 1000 * 9.81 if g_pr > 1 else g_pr
         g_f_kN = g_f / 1000 * 9.81 if g_f > 1 else g_f
-        g_n = sp.Q_roof + g_pr_kN + g_f_kN + sp.Q_snow + sp.Q_dust + 1.0
+        g_n = sp.Q_roof + g_pr_kN + g_f_kN + sp.Q_snow + sp.Q_dust + sp.Q_tech
         r_pf = self.calc_podstropilnye(sp, length, g_n, g_f)
         results['Подстропильные фермы'] = r_pf
         g_pf = r_pf.get('method1_kg', r_pf.get('method2_kg', 0)) if sp.column_step == 12 else 0

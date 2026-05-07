@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from calculator_logic import (
     CalculatorLogic, InputParams, SpanParams,
-    _get_alpha_pb, _get_q_rail, _interpolate_table,
+    _get_alpha_pb, _get_alpha_pf, _get_q_rail, _interpolate_table,
     PROGON_6M, PROGON_12M, H_CRANE, A_GAP, H_F, H_SH,
 )
 
@@ -31,6 +31,7 @@ def make_span(**kwargs) -> SpanParams:
         Q_dust=0.5,
         Q_roof=0.3,
         Q_purlin=0.2,
+        purlin_step=3.0,
         yc=1.0,
         truss_type='Уголки',
         crane_capacity=20.0,
@@ -125,30 +126,59 @@ class TestProgony:
         assert min_12m <= r['m_pr'] <= max_12m * 1.01
 
     def test_n_pr_formula(self):
-        """n_pr = span_L / a_pr + 1 (без лишней +3)."""
+        """n_pr = ceil(span_L / a_pr) + 3."""
         sp = make_span(span_L=30.0)
         calc = make_calc()
         r = calc.calc_progony(sp, 60.0)
-        # a_pr = 3.0, span_L = 30 → n_pr = 30/3 + 1 = 11
-        assert r['n_pr'] == 11
+        assert r['purlin_step'] == pytest.approx(3.0)
+        assert r['n_pr'] == 13
 
     def test_n_pr_span_18(self):
         sp = make_span(span_L=18.0)
         calc = make_calc()
         r = calc.calc_progony(sp, 60.0)
-        assert r['n_pr'] == 7  # 18/3 + 1
+        assert r['n_pr'] == 9
 
     def test_n_pr_span_24(self):
         sp = make_span(span_L=24.0)
         calc = make_calc()
         r = calc.calc_progony(sp, 60.0)
-        assert r['n_pr'] == 9  # 24/3 + 1
+        assert r['n_pr'] == 11
 
     def test_n_pr_span_36(self):
         sp = make_span(span_L=36.0)
         calc = make_calc()
         r = calc.calc_progony(sp, 60.0)
-        assert r['n_pr'] == 13  # 36/3 + 1
+        assert r['n_pr'] == 15
+
+    def test_custom_purlin_step_changes_count(self):
+        sp = make_span(span_L=24.0, purlin_step=2.0)
+        calc = make_calc()
+        r = calc.calc_progony(sp, 60.0)
+        assert r['purlin_step'] == pytest.approx(2.0)
+        assert r['n_pr'] == 15
+
+    def test_smaller_purlin_step_increases_total(self):
+        calc = make_calc()
+        r3 = calc.calc_progony(make_span(span_L=24.0, purlin_step=3.0), 60.0)
+        r2 = calc.calc_progony(make_span(span_L=24.0, purlin_step=2.0), 60.0)
+        assert r2['total_kg'] > r3['total_kg']
+
+    def test_purlin_selection_uses_tonnes_per_meter(self):
+        sp = make_span(
+            span_L=24.0,
+            truss_step_B=6.0,
+            Q_roof=0.30,
+            Q_purlin=0.0,
+            Q_snow=1.20,
+            Q_dust=0.0,
+            purlin_step=3.0,
+            yc=1.0,
+        )
+        calc = make_calc()
+        r = calc.calc_progony(sp, 60.0)
+        assert r['q_pr_tm'] == pytest.approx(r['q_pr_kn_m'] / 9.81)
+        assert r['m_pr'] == pytest.approx(166.2)
 
     def test_heavier_load_heavier_purlin(self):
         """Бо́льшая снеговая нагрузка → бо́льшая масса прогона."""
@@ -166,6 +196,54 @@ class TestProgony:
         r60 = calc.calc_progony(sp, 60.0)
         r120 = calc.calc_progony(sp, 120.0)
         assert r120['total_kg'] == pytest.approx(r60['total_kg'] * 2, rel=0.01)
+
+
+# ── 2a. Подстропильные фермы ─────────────────────────────────────────────────
+
+class TestPodstropilnye:
+    def test_alpha_pf_table_4_1_range(self):
+        assert _get_alpha_pf(100) == pytest.approx(0.044)
+        assert _get_alpha_pf(400) == pytest.approx(0.104)
+        assert _get_alpha_pf(800) == pytest.approx(0.184)
+
+    def test_alpha_pf_clamps_above_800(self):
+        assert _get_alpha_pf(900) == pytest.approx(0.184)
+
+    def test_method1_uses_truss_step_for_reaction(self):
+        sp = make_span(span_L=24.0, truss_step_B=6.0, column_step=12.0)
+        calc = make_calc()
+        r = calc.calc_podstropilnye(sp, 60.0, g_n=5.0, g_f=1.0)
+        assert r['R_kn'] == pytest.approx(5.0 * 6.0 * 24.0 / 2)
+
+    def test_method1_exact_kn_to_kg_conversion(self):
+        sp = make_span(span_L=24.0, truss_step_B=6.0, column_step=12.0)
+        calc = make_calc()
+        r = calc.calc_podstropilnye(sp, 60.0, g_n=5.0, g_f=1.0)
+        expected_kg = r['alpha_pf'] * 12.0 ** 2 / 9.81 * 1000
+        assert r['method1_kg'] == pytest.approx(expected_kg)
+
+    def test_absent_when_truss_step_equals_column_step(self):
+        sp = make_span(truss_step_B=12.0, column_step=12.0)
+        calc = make_calc()
+        r = calc.calc_podstropilnye(sp, 60.0, g_n=5.0, g_f=1.0)
+        assert r['method'] == 0
+
+
+# ── 2b. Стропильные фермы ────────────────────────────────────────────────────
+
+class TestStropilnyeFermy:
+    def test_method1_exact_kn_to_kg_conversion(self):
+        sp = make_span(span_L=24.0, truss_step_B=6.0, truss_type='Уголки')
+        calc = make_calc()
+        r = calc.calc_stropilnye_fermy(sp, length=60.0, g_pr=0.2)
+        assert r['method1_kg'] == pytest.approx(r['method1_kN'] / 9.81 * 1000)
+
+    def test_method1_exposes_formula_inputs(self):
+        sp = make_span(span_L=24.0, truss_step_B=6.0, truss_type='Уголки')
+        calc = make_calc()
+        r = calc.calc_stropilnye_fermy(sp, length=60.0, g_pr=0.2)
+        assert r['g_n'] > 0
+        assert r['alpha_f'] == pytest.approx(1.4)
 
 
 # ── 3. Подкрановые балки: режимы 1К-6К и 7К-8К ──────────────────────────────
@@ -308,6 +386,41 @@ class TestColumnHeights:
         r_h = calc.calc_columns(sp_h, 60.0, 0.1, 0.1, 0, 3000)
         r_l = calc.calc_columns(sp_l, 60.0, 0.1, 0.1, 0, 2000)
         assert r_h['total_kg'] > r_l['total_kg']
+
+    def test_column_details_are_exposed(self):
+        """Расчёт колонн возвращает слагаемые для проверки методики."""
+        sp = make_span()
+        calc = make_calc()
+        r = calc.calc_columns(sp, 60.0, 0.1, 0.1, 0, 2500)
+        for key in (
+            'G_st_v', 'G_st_n', 'sum_F_v_kN', 'sum_F_n_kN',
+            'G_kv_kN', 'G_kn_kN', 'G_kv_kg', 'G_kn_kg', 'Dmax_kN',
+            ):
+            assert key in r
+            assert r[key] >= 0
+
+    def test_dmax_components_sum_to_total(self):
+        """Слагаемые Dmax должны складываться в итоговое значение."""
+        sp = make_span()
+        calc = make_calc()
+        r = calc.calc_columns(sp, 60.0, 0.1, 0.1, 0, 2500)
+        total = r["Dmax_qeq_kN"] + r["Dmax_rail_kN"] + r["Dmax_beam_kN"]
+        assert r["Dmax_kN"] == pytest.approx(total, rel=1e-6)
+
+    def test_sfn_components_sum_to_total(self):
+        """Слагаемые SFn должны складываться в итоговое значение."""
+        sp = make_span()
+        calc = make_calc()
+        r = calc.calc_columns(sp, 60.0, 0.1, 0.1, 0, 2500)
+        total = r["SFn_SFv_kN"] + r["SFn_Dmax_kN"] + r["SFn_Gpb_kN"] + r["SFn_Gwl_kN"] + r["SFn_Gcu_kN"]
+        assert r["SFn_kN"] == pytest.approx(total, rel=1e-6)
+
+    def test_q_tech_affects_columns(self):
+        """Технологическая нагрузка должна менять массу колонн."""
+        calc = make_calc()
+        low = calc.calc_columns(make_span(Q_tech=0.0), 60.0, 0.1, 0.1, 0, 2500)
+        high = calc.calc_columns(make_span(Q_tech=2.0), 60.0, 0.1, 0.1, 0, 2500)
+        assert high['total_kg'] > low['total_kg']
 
 
 # ── 5. Вспомогательные функции ───────────────────────────────────────────────

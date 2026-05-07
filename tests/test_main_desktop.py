@@ -33,13 +33,17 @@ from main_desktop import (
     select_purlin,
     get_truss_mass_m2,
     get_subtruss_mass_m2,
+    get_subtruss_alpha_pf,
     get_bracing_kgm2,
     get_crane_beam_kgm,
     get_brake_kgm,
     get_fakhverk_kgm2,
     get_pipe_support_kgm2,
     calculate,
+    App,
     PURLIN_TABLE,
+    PURLIN_TABLE_6M,
+    PURLIN_TABLE_12M,
     ROOF_MATERIALS,
     ROOF_PRESETS,
     CRANE_MODE_FACTOR_M1,
@@ -122,39 +126,40 @@ class TestInterpTable:
 class TestPurlinTable:
     """Структурные проверки PURLIN_TABLE."""
 
-    def test_has_six_rows(self):
-        assert len(PURLIN_TABLE) == 6
+    def test_has_methodic_rows(self):
+        assert len(PURLIN_TABLE_6M) >= 10
+        assert len(PURLIN_TABLE_12M) >= 11
 
-    def test_tuple_length_five(self):
-        for row in PURLIN_TABLE:
-            assert len(row) == 5, f"Строка {row} должна иметь 5 полей"
+    def test_tuple_length_three(self):
+        for table in (PURLIN_TABLE_6M, PURLIN_TABLE_12M):
+            for row in table:
+                assert len(row) == 3, f"Строка {row} должна иметь 3 поля"
 
-    def test_qp_max_ascending(self):
-        qps = [row[0] for row in PURLIN_TABLE]
-        assert qps == sorted(qps), "qp_max должны возрастать"
+    def test_grouped_tables_registered(self):
+        assert PURLIN_TABLE[6] is PURLIN_TABLE_6M
+        assert PURLIN_TABLE[12] is PURLIN_TABLE_12M
 
     def test_mass_6m_positive(self):
-        for row in PURLIN_TABLE:
+        for row in PURLIN_TABLE_6M:
             assert row[2] > 0, f"Масса B=6м должна быть положительной: {row}"
 
     def test_mass_12m_positive(self):
-        for row in PURLIN_TABLE:
-            assert row[4] > 0, f"Масса B=12м должна быть положительной: {row}"
+        for row in PURLIN_TABLE_12M:
+            assert row[2] > 0, f"Масса B=12м должна быть положительной: {row}"
 
-    def test_mass_12m_greater_than_6m(self):
-        """Двутавр 12 м тяжелее швеллера 6 м."""
-        for row in PURLIN_TABLE:
-            assert row[4] > row[2], (
-                f"Масса B=12м ({row[4]}) должна быть > B=6м ({row[2]}): {row}"
-            )
+    def test_methodic_channel_2x24_present(self):
+        assert (2.25, "2×Швеллер 24", 288.0) in PURLIN_TABLE_6M
+
+    def test_methodic_ibeam_40sh1_present(self):
+        assert (2.00, "Двутавр 40Ш1", 1153.2) in PURLIN_TABLE_12M
 
     def test_name_6m_is_channel(self):
-        for row in PURLIN_TABLE:
+        for row in PURLIN_TABLE_6M:
             assert "Швеллер" in row[1], f"B=6м должен быть швеллер: {row[1]}"
 
     def test_name_12m_is_ibeam(self):
-        for row in PURLIN_TABLE:
-            assert "Двутавр" in row[3], f"B=12м должен быть двутавр: {row[3]}"
+        for row in PURLIN_TABLE_12M:
+            assert "Двутавр" in row[1], f"B=12м должен быть двутавр: {row[1]}"
 
 
 class TestSelectPurlin:
@@ -319,6 +324,14 @@ class TestSubtruss:
 
     def test_subtruss_loads_ascending(self):
         assert SUBTRUSS_LOADS == sorted(SUBTRUSS_LOADS)
+
+    def test_alpha_pf_table_4_1_range(self):
+        assert get_subtruss_alpha_pf(100) == pytest.approx(0.044)
+        assert get_subtruss_alpha_pf(400) == pytest.approx(0.104)
+        assert get_subtruss_alpha_pf(800) == pytest.approx(0.184)
+
+    def test_alpha_pf_clamps_above_800(self):
+        assert get_subtruss_alpha_pf(900) == pytest.approx(0.184)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -553,6 +566,7 @@ def _sp(**kw):
         H_col_ov=0.0,
         Q_roof=0.20,
         Q_purlin=0.35,
+        purlin_step=3.0,
         truss_type="Уголки",
         q_crane_t=20.0,
         n_cranes=1,
@@ -598,9 +612,48 @@ class TestCalculateSingleSpan:
         res = calculate(_gp(), [_sp()])
         assert res["колонны"]["масса_общая_т"] > 0
 
+    def test_column_row_details_are_exposed(self):
+        res = calculate(_gp(), [_sp()])
+        row = res["колонны"]["по_рядам"][0]
+        for key in ("Qtech_кНм2", "Gwu_кН", "Gwl_кН", "SFv_кН", "Gcu_кН",
+                    "Dmax_qeq_кН", "Dmax_rail_кН", "Dmax_beam_кН", "Dmax_кН", "Gpb_кН", "Gcl_кН"):
+            assert key in row
+            assert row[key] >= 0
+
+    def test_dmax_components_sum_to_total(self):
+        res = calculate(_gp(), [_sp()])
+        row = res["колонны"]["по_рядам"][0]
+        total = row["Dmax_qeq_кН"] + row["Dmax_rail_кН"] + row["Dmax_beam_кН"]
+        assert row["Dmax_кН"] == pytest.approx(total, rel=1e-6)
+
+    def test_sfn_components_sum_to_total(self):
+        res = calculate(_gp(), [_sp()])
+        row = res["колонны"]["по_рядам"][0]
+        total = row["SFn_SFv_кН"] + row["SFn_Dmax_кН"] + row["SFn_Gpb_кН"] + row["SFn_Gwl_кН"] + row["SFn_Gcu_кН"]
+        assert row["SFn_кН"] == pytest.approx(total, abs=0.01)
+
+    def test_q_tech_affects_columns(self):
+        low = calculate(_gp(Q_tech=0.0), [_sp()])
+        high = calculate(_gp(Q_tech=2.0), [_sp()])
+        assert high["колонны"]["масса_общая_т"] > low["колонны"]["масса_общая_т"]
+
     def test_crane_beam_m1_positive(self):
         res = calculate(_gp(), [_sp()])
         assert res["подкрановые_балки"]["масса_общая_т_М1"] > 0
+
+    def test_ui_dust_disabled_passes_zero(self):
+        app = App()
+        app.v_dust_enabled.set(False)
+        gp = app._read_global_params()
+        assert gp["Q_dust"] == 0.0
+        app.destroy()
+
+    def test_ui_dust_enabled_uses_default_value(self):
+        app = App()
+        app.v_dust_enabled.set(True)
+        gp = app._read_global_params()
+        assert gp["Q_dust"] == pytest.approx(0.50)
+        app.destroy()
 
     def test_floor_area_correct(self):
         res = calculate(_gp(L_build=120.0), [_sp(L_span=24.0)])
@@ -615,6 +668,16 @@ class TestCalculateSingleSpan:
         res1 = calculate(_gp(yc=1.0), [_sp()])
         res2 = calculate(_gp(yc=1.2), [_sp()])
         assert res2["итого"]["М1_т"] > res1["итого"]["М1_т"]
+
+    def test_low_tech_load_adds_warning(self):
+        res = calculate(_gp(Q_tech=0.0), [_sp()])
+        warnings = res.get("предупреждения", [])
+        assert any("Q_tech меньше 1.0" in warning for warning in warnings)
+
+    def test_tech_load_at_minimum_has_no_warning(self):
+        res = calculate(_gp(Q_tech=1.0), [_sp()])
+        warnings = res.get("предупреждения", [])
+        assert not any("Q_tech меньше 1.0" in warning for warning in warnings)
 
     def test_longer_building_heavier(self):
         res60 = calculate(_gp(L_build=60.0), [_sp()])
@@ -632,6 +695,21 @@ class TestCalculateSingleSpan:
         res36 = calculate(_gp(), [_sp(L_span=36.0)])
         assert res36["итого"]["М1_т"] > res24["итого"]["М1_т"]
 
+    def test_truss_m1_detail_matches_formula(self):
+        gp = _gp(yc=1.0)
+        span = _sp(L_span=24.0, B_step=6.0, truss_type="Уголки")
+        res = calculate(gp, [span])
+        row = res["фермы"]["по_пролётам"][0]
+        expected_one_t = (
+            (row["gn_кНм2"] * span["B_step"] / 1000 + 0.018)
+            * row["αф"]
+            * span["L_span"] ** 2
+            / 0.85
+            * gp["yc"]
+            / 9.81
+        )
+        assert row["G_1шт_М1_т"] == pytest.approx(expected_one_t, rel=0.01)
+
     def test_col_step_12_has_subtruss(self):
         """Шаг колонн 12 м → есть подстропильные фермы."""
         res = calculate(_gp(), [_sp(col_step=12.0)])
@@ -647,6 +725,24 @@ class TestCalculateSingleSpan:
         m1 = st.get("масса_общая_т_М1", 0) or 0
         m2 = st.get("масса_общая_т_М2", 0) or 0
         assert (m1 + m2) == 0
+
+    def test_two_subtruss_spans_roughly_double_m1_mass(self):
+        """Масса М1 суммируется по пролётам, без деления на число пролётов."""
+        span = _sp(L_span=24.0, B_step=6.0, col_step=12.0)
+        one = calculate(_gp(), [span])
+        two = calculate(_gp(), [span, span])
+        m1_one = one["подстропильные_фермы"]["масса_общая_т_М1"]
+        m1_two = two["подстропильные_фермы"]["масса_общая_т_М1"]
+        assert m1_two == pytest.approx(m1_one * 2, rel=0.01)
+
+    def test_two_subtruss_spans_roughly_double_m2_mass(self):
+        """Масса М2 подстропильных также суммируется без деления на число пролётов."""
+        span = _sp(L_span=24.0, B_step=6.0, col_step=12.0)
+        one = calculate(_gp(), [span])
+        two = calculate(_gp(), [span, span])
+        m2_one = one["подстропильные_фермы"]["масса_общая_т_М2"]
+        m2_two = two["подстропильные_фермы"]["масса_общая_т_М2"]
+        assert m2_two == pytest.approx(m2_one * 2, rel=0.01)
 
 
 class TestCalculateCraneMode:
@@ -713,6 +809,18 @@ class TestCalculatePurlin:
         res = calculate(_gp(), [_sp(B_step=12.0)])
         row = res["прогоны"]["по_пролётам"][0]
         assert "Двутавр" in row["профиль"]
+
+    def test_default_purlin_count_includes_ridge_and_edges(self):
+        """Для L=24 м и шага 3 м: ceil(24/3)+3 = 11 прогонов."""
+        res = calculate(_gp(), [_sp(L_span=24.0, purlin_step=3.0)])
+        row = res["прогоны"]["по_пролётам"][0]
+        assert row["шаг_прогонов_м"] == pytest.approx(3.0)
+        assert row["количество_прогонов"] == 11
+
+    def test_smaller_purlin_step_increases_mass(self):
+        res3 = calculate(_gp(), [_sp(L_span=24.0, purlin_step=3.0)])
+        res2 = calculate(_gp(), [_sp(L_span=24.0, purlin_step=2.0)])
+        assert res2["прогоны"]["масса_общая_т"] > res3["прогоны"]["масса_общая_т"]
 
 
 class TestCalculateMultiSpan:

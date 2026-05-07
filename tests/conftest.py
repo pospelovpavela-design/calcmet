@@ -29,7 +29,11 @@ class _Widget:
     def grid_remove(self): pass
     def grid_forget(self): pass
     def columnconfigure(self, *a, **kw): pass
+    def grid_columnconfigure(self, *a, **kw): pass
     def grid_rowconfigure(self, *a, **kw): pass
+    def title(self, *a, **kw): pass
+    def geometry(self, *a, **kw): pass
+    def resizable(self, *a, **kw): pass
 
     # state / text
     def configure(self, **kw): pass
@@ -44,6 +48,10 @@ class _Widget:
 
     # scrollableframe / toplevel
     def mainloop(self): pass
+    def bind(self, *a, **kw): pass
+    def unbind(self, *a, **kw): pass
+    def after(self, *a, **kw): return None
+    def after_cancel(self, *a, **kw): pass
 
 
 class _Var:
