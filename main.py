@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Металлоёмкость производственных зданий — iOS v2.0
+Металлоёмкость производственных зданий — iOS v3.0.1
 Многопролётный расчёт, экспорт результатов, safe-area.
-Расчётное ядро идентично desktop v3.0 (Ry=240000, CRANE_Q_EQUIV ×2.5, коэф.режима 1.80).
+Расчётное ядро синхронизировано с desktop v3.0.
 """
 import os, sys, math, traceback
 from datetime import datetime
@@ -30,15 +30,39 @@ sys.excepthook = _save_crash
 #  ДАННЫЕ — идентичны desktop v3.0
 # ════════════════════════════════════════════════════════════
 
-# Таблица прогонов: (qp_max т/м, имя B=6, масса_кг B=6, имя B=12, масса_кг B=12)
-PURLIN_TABLE = [
-    (0.45, "Швеллер 20",   110.4, "Двутавр 20",  345.0),
-    (0.67, "Швеллер 22",   122.4, "Двутавр 24",  420.0),
-    (0.87, "Швеллер 24",   134.4, "Двутавр 27",  492.0),
-    (1.10, "Швеллер 27",   151.2, "Двутавр 30",  558.0),
-    (1.30, "Швеллер 30",   168.0, "Двутавр 33",  624.0),
-    (1.50, "Швеллер 33",   184.8, "Двутавр 36",  697.2),
+# Таблица 3 методики: подбор прогонов по нормативной нагрузке.
+# Формат: (qp_max т/м, профиль, масса_1прогона кг).
+PURLIN_TABLE_6M = [
+    (0.45, "Швеллер 20",        110.4),
+    (0.65, "Швеллер 22",        126.0),
+    (0.90, "Швеллер 24",        144.0),
+    (1.25, "Швеллер 27",        166.2),
+    (1.70, "Швеллер 30",        190.8),
+    (1.25, "2×Швеллер 20",      220.8),
+    (1.70, "2×Швеллер 22",      252.0),
+    (2.25, "2×Швеллер 24",      288.0),
+    (3.00, "2×Швеллер 27",      332.4),
+    (3.80, "2×Швеллер 30",      381.6),
 ]
+
+PURLIN_TABLE_12M = [
+    (0.20, "Двутавр 30Б1",       394.8),
+    (0.30, "Двутавр 30Б2",       439.2),
+    (0.30, "Двутавр 26Ш1",       512.4),
+    (0.40, "Двутавр 26Ш2",       590.4),
+    (0.40, "Двутавр 35Б1",       466.8),
+    (0.50, "Двутавр 35Б2",       519.6),
+    (0.60, "Двутавр 30Ш1",       643.2),
+    (0.75, "Двутавр 30Ш2",       732.0),
+    (1.20, "Двутавр 35Ш1",       901.2),
+    (1.40, "Двутавр 35Ш2",       986.4),
+    (2.00, "Двутавр 40Ш1",      1153.2),
+]
+
+PURLIN_TABLE = {
+    6: PURLIN_TABLE_6M,
+    12: PURLIN_TABLE_12M,
+}
 
 CRANE_BEAM_ALPHA = {
     # Источник: методика ЦНИИ, разд. 5.1.
@@ -223,12 +247,13 @@ def interp_table(loads, masses, target):
     return masses[-1]
 
 def select_purlin(load_tm, B_step):
-    for qmax, n6, m6, n12, m12 in PURLIN_TABLE:
+    use_6 = B_step <= 6
+    table = PURLIN_TABLE_6M if use_6 else PURLIN_TABLE_12M
+    for qmax, name, mass in sorted(table, key=lambda row: (row[0], row[2])):
         if load_tm <= qmax:
-            return (m6, n6) if B_step <= 6 else (m12, n12)
-    _, n6, m6, n12, m12 = PURLIN_TABLE[-1]
-    n6 += "!"; n12 += "!"
-    return (m6, n6) if B_step <= 6 else (m12, n12)
+            return mass, name
+    _, name, mass = max(table, key=lambda row: row[0])
+    return mass, f"{name}(!)"
 
 def get_truss_mass_m2(truss_type, span_m, load_tm):
     spans = sorted(TRUSS_MASSES.get(truss_type, {}).keys())
@@ -241,6 +266,10 @@ def get_truss_mass_m2(truss_type, span_m, load_tm):
 def get_subtruss_mass_m2(R_t):
     return interp_table(SUBTRUSS_LOADS, SUBTRUSS_MASSES,
                         ceil_to_table(R_t, SUBTRUSS_LOADS))
+
+def get_subtruss_alpha_pf(R_kn):
+    Rf = max(100.0, min(float(R_kn), 800.0))
+    return (Rf - 100.0) * 0.0002 + 0.044
 
 def get_bracing_kgm2(q_crane_t, step_farm_m):
     if q_crane_t <= 120: return 15.0 if step_farm_m <= 6 else 35.0
@@ -293,7 +322,7 @@ def calculate(gp: dict, spans: list) -> dict:
     log = []
     L_build = gp["L_build"]
     Q_snow  = gp["Q_snow"]
-    Q_dust  = gp["Q_dust"]
+    Q_dust  = gp["Q_dust"] if gp.get("dust_enabled", False) else 0.0
     Q_tech  = gp["Q_tech"]
     yc      = gp["yc"]
     N = len(spans)
@@ -301,6 +330,8 @@ def calculate(gp: dict, spans: list) -> dict:
     S_floor = L_build * W_build
     P_walls = 2 * (L_build + W_build)
     log.append(f"Пролётов: {N}  W={W_build:.0f}м  S={S_floor:.0f}м²")
+    if Q_tech < 1.0:
+        log.append("Технологическая нагрузка Q_tech меньше 1.0 кН/м²; по методике рекомендуется принимать не менее 1.0 кН/м².")
 
     def _span_col_heights(sp):
         h_b = sp["col_step"] / 6 if sp["q_crane_t"] <= 50 else sp["col_step"] / 7
@@ -329,10 +360,10 @@ def calculate(gp: dict, spans: list) -> dict:
         L = sp["L_span"]; tt = sp["truss_type"]; B = sp["B_step"]
         Ss = L_build * L
         Q_load_total = sp["Q_roof"] + sp["Q_purlin"] + Q_snow + Q_dust + Q_tech + g_links
-        a_pr = 3.0
+        a_pr = max(float(sp.get("purlin_step", 3.0)), 0.1)
         qp_tm = (sp["Q_roof"] + sp["Q_purlin"] + Q_snow + Q_dust + Q_tech) * a_pr * yc / 9.81
         mp, pname = select_purlin(qp_tm, B)
-        n_pr = int(L / a_pr) + 1
+        n_pr = math.ceil(L / a_pr) + 3
         g_pur = mp * n_pr / (L * B)
         G_pur_t = g_pur * Ss / 1000
         G_pur_all_t += G_pur_t
@@ -350,7 +381,8 @@ def calculate(gp: dict, spans: list) -> dict:
             G_tr_m2_all += G_tr2
         span_data.append({
             "idx": i+1, "L_span": L, "S_span": Ss, "tt": tt, "B_step": B,
-            "purlin": pname, "qp_tm": round(qp_tm, 3),
+            "purlin": pname, "purlin_step": a_pr, "n_purlins": n_pr,
+            "qp_tm": round(qp_tm, 3),
             "g_pur_kgm2": round(g_pur, 2), "G_pur_t": round(G_pur_t, 2),
             "Q_tm": round(Q_tm, 3),
             "G_tr_m1": round(G_tr1, 2) if G_tr1 is not None else "н/п",
@@ -362,6 +394,8 @@ def calculate(gp: dict, spans: list) -> dict:
         "масса_общая_т": round(G_pur_all_t, 2),
         "по_пролётам": [{"пролёт":d["idx"],"профиль":d["purlin"],
             "нагрузка_тм":d["qp_tm"],"расход_кгм2":d["g_pur_kgm2"],
+            "шаг_прогонов_м": round(d["purlin_step"], 3),
+            "количество_прогонов": d["n_purlins"],
             "масса_т":d["G_pur_t"]} for d in span_data],
     }
     res["фермы"] = {
@@ -398,14 +432,17 @@ def calculate(gp: dict, spans: list) -> dict:
             n_bays = L_build / sp["col_step"]
             R_kn = Q_load_sp * B * yc * L / 2
             R_t  = R_kn / 9.81
-            Rf   = max(100, min(R_kn, 400))
-            apf  = (Rf - 100) * 0.0002 + 0.044
-            G1   = apf * 144 * n_bays / N
+            apf  = get_subtruss_alpha_pf(R_kn)
+            G1_one_t = apf * sp["col_step"] ** 2 / 9.81
+            G1   = G1_one_t * n_bays
             G_sub_m1 += G1
             mt = get_subtruss_mass_m2(R_t)
-            G2 = mt * n_bays / N if mt else None
+            G2 = mt * n_bays if mt else None
             if G2: G_sub_m2 += G2
             sub_rows.append({"пролёт": i+1, "R_кн": round(R_kn, 1),
+                "αпф": round(apf, 3),
+                "G_1шт_М1_т": round(G1_one_t, 2),
+                "G_1шт_М2_т": round(mt, 2) if mt else "н/п",
                 "G_М1_т": round(G1, 2), "G_М2_т": round(G2, 2) if G2 else "н/п"})
         res["подстропильные_фермы"] = {
             "масса_общая_т_М1": round(G_sub_m1, 2),
@@ -451,27 +488,54 @@ def calculate(gp: dict, spans: list) -> dict:
     # 6. Колонны
     rho=78.5; pu=1.4; pl=2.1; kMu=0.275; kMl=0.45; gst=0.25; aw=0.15
 
-    def _col_kg(L_sp, q_cr, H_up, H_lo, cs, Q_load_sp):
+    def _col_kg(L_sp, q_cr, H_up, H_lo, cs, Q_load_sp, n_cranes):
         L_pb_loc = float(cs)
         Gwu = gst * H_up * (1 - aw) * cs
         Gwl = gst * H_lo * (1 - aw) * cs
-        SFv = Q_load_sp * cs * L_sp / 2 + Gwu
+        SFv = (Q_load_sp + Q_tech) * cs * L_sp / 2 + Gwu
         Gcu = SFv * rho * pu * H_up / (kMu * 240000)
         qeq = _lkp(CRANE_Q_EQUIV, q_cr)
-        D   = qeq * cs * 1.1 * yc
         alp = _lkp(CRANE_BEAM_ALPHA, q_cr)
         qrr = _lkp(RAIL_WEIGHT_KN, q_cr)
+        pb_kgm = get_crane_beam_kgm(q_cr, L_pb_loc, n_cranes)
+        Dmax_qeq = qeq * L_pb_loc
+        Dmax_rail = qrr * L_pb_loc
+        Dmax_beam = (pb_kgm * alp * L_pb_loc / 100) if pb_kgm else 0.0
+        Dmax = Dmax_qeq + Dmax_rail + Dmax_beam
         Gpb = (alp * L_pb_loc + qrr) * L_pb_loc * 1.2  # kпб=1.2 по методике
-        SFn = SFv + D + Gpb + Gwl + Gcu
+        SFn = SFv + Dmax + Gpb + Gwl + Gcu
         Gcl = SFn * rho * pl * H_lo / (kMl * 240000)
-        return (Gcu + Gcl) / 9.81 * 1000
+        mass_kg = (Gcu + Gcl) / 9.81 * 1000
+        return {
+            "Qtech_кНм2": round(Q_tech, 3),
+            "Gwu_кН": round(Gwu, 3),
+            "Gwl_кН": round(Gwl, 3),
+            "SFv_кН": round(SFv, 3),
+            "Gcu_кН": round(Gcu, 3),
+            "qeq_кН": round(qeq, 3),
+            "Dmax_qeq_кН": round(Dmax_qeq, 3),
+            "Dmax_rail_кН": round(Dmax_rail, 3),
+            "Dmax_beam_кН": round(Dmax_beam, 3),
+            "Dmax_кН": round(Dmax, 3),
+            "alpha_pb": round(alp, 3),
+            "qrail_кН": round(qrr, 3),
+            "Gpb_кН": round(Gpb, 3),
+            "SFn_SFv_кН": round(SFv, 3),
+            "SFn_Dmax_кН": round(Dmax, 3),
+            "SFn_Gpb_кН": round(Gpb, 3),
+            "SFn_Gwl_кН": round(Gwl, 3),
+            "SFn_Gcu_кН": round(Gcu, 3),
+            "SFn_кН": round(SFn, 3),
+            "Gcl_кН": round(Gcl, 3),
+            "mass_kg": mass_kg,
+        }
 
     G_cols_t = 0.0; col_rows_detail = []
     sp0 = spans[0]; H_up0, H_lo0, _ = span_heights[0]
     n_col_0 = round(L_build / sp0["col_step"]) + 1
-    Gce = _col_kg(sp0["L_span"], sp0["q_crane_t"], H_up0, H_lo0, sp0["col_step"], span_data[0]["Q_load_total"])
-    G_cols_t += Gce * n_col_0 / 1000
-    col_rows_detail.append({"ряд": "Крайний Л", "масса_1_кг": round(Gce, 1), "масса_ряд_т": round(Gce * n_col_0 / 1000, 2)})
+    Gce = _col_kg(sp0["L_span"], sp0["q_crane_t"], H_up0, H_lo0, sp0["col_step"], span_data[0]["Q_load_total"], sp0["n_cranes"])
+    G_cols_t += Gce["mass_kg"] * n_col_0 / 1000
+    col_rows_detail.append({"ряд": "Крайний Л", "масса_1_кг": round(Gce["mass_kg"], 1), "масса_ряд_т": round(Gce["mass_kg"] * n_col_0 / 1000, 2), **Gce})
 
     for mi in range(1, N):
         sL = spans[mi-1]; sR = spans[mi]
@@ -481,25 +545,57 @@ def calculate(gp: dict, spans: list) -> dict:
         Q_L = span_data[mi-1]["Q_load_total"]; Q_R = span_data[mi]["Q_load_total"]
         Gwu = gst * H_upL * (1 - aw) * cs_mid
         Gwl = gst * H_loL * (1 - aw) * cs_mid
-        SFv = (Q_L + Q_R) * cs_mid * (sL["L_span"] + sR["L_span"]) / 4 + Gwu
+        SFv = (Q_L + Q_R + 2 * Q_tech) * cs_mid * (sL["L_span"] + sR["L_span"]) / 4 + Gwu
         Gcu = SFv * rho * pu * H_upL / (kMu * 240000)
         qeqL = _lkp(CRANE_Q_EQUIV, sL["q_crane_t"]); qeqR = _lkp(CRANE_Q_EQUIV, sR["q_crane_t"])
-        D = (qeqL + qeqR) * cs_mid * 1.1 * yc
         alpL = _lkp(CRANE_BEAM_ALPHA, sL["q_crane_t"]); qrL = _lkp(RAIL_WEIGHT_KN, sL["q_crane_t"])
         alpR = _lkp(CRANE_BEAM_ALPHA, sR["q_crane_t"]); qrR = _lkp(RAIL_WEIGHT_KN, sR["q_crane_t"])
+        pb_kgm_L = get_crane_beam_kgm(sL["q_crane_t"], float(sL["col_step"]), sL["n_cranes"])
+        pb_kgm_R = get_crane_beam_kgm(sR["q_crane_t"], float(sR["col_step"]), sR["n_cranes"])
+        Dmax_qeq = (qeqL + qeqR) * cs_mid
+        Dmax_rail = (qrL + qrR) * cs_mid
+        Dmax_beam = ((pb_kgm_L * alpL if pb_kgm_L else 0.0) + (pb_kgm_R * alpR if pb_kgm_R else 0.0)) * cs_mid / 100
+        Dmax = Dmax_qeq + Dmax_rail + Dmax_beam
         Gpb = (alpL * float(sL["col_step"]) + qrL) * float(sL["col_step"]) * 1.2 + \
               (alpR * float(sR["col_step"]) + qrR) * float(sR["col_step"]) * 1.2  # kпб=1.2
-        SFn = SFv + D + Gpb + Gwl + Gcu
+        SFn = SFv + Dmax + Gpb + Gwl + Gcu
         Gcl = SFn * rho * pl * H_loL / (kMl * 240000)
         Gcm_kg = (Gcu + Gcl) / 9.81 * 1000
         G_cols_t += Gcm_kg * n_col_mid / 1000
-        col_rows_detail.append({"ряд": f"Средний {mi}", "масса_1_кг": round(Gcm_kg, 1), "масса_ряд_т": round(Gcm_kg * n_col_mid / 1000, 2)})
+        col_rows_detail.append({
+            "ряд": f"Средний {mi}",
+            "масса_1_кг": round(Gcm_kg, 1),
+            "масса_ряд_т": round(Gcm_kg * n_col_mid / 1000, 2),
+            "Qtech_кНм2": round(Q_tech, 3),
+            "Gwu_кН": round(Gwu, 3),
+            "Gwl_кН": round(Gwl, 3),
+            "SFv_кН": round(SFv, 3),
+            "Gcu_кН": round(Gcu, 3),
+            "qeq_лев_кН": round(qeqL, 3),
+            "qeq_прав_кН": round(qeqR, 3),
+            "Dmax_qeq_кН": round(Dmax_qeq, 3),
+            "Dmax_rail_кН": round(Dmax_rail, 3),
+            "Dmax_beam_кН": round(Dmax_beam, 3),
+            "Dmax_кН": round(Dmax, 3),
+            "alpha_pb_лев": round(alpL, 3),
+            "alpha_pb_прав": round(alpR, 3),
+            "qrail_лев_кН": round(qrL, 3),
+            "qrail_прав_кН": round(qrR, 3),
+            "Gpb_кН": round(Gpb, 3),
+            "SFn_SFv_кН": round(SFv, 3),
+            "SFn_Dmax_кН": round(Dmax, 3),
+            "SFn_Gpb_кН": round(Gpb, 3),
+            "SFn_Gwl_кН": round(Gwl, 3),
+            "SFn_Gcu_кН": round(Gcu, 3),
+            "SFn_кН": round(SFn, 3),
+            "Gcl_кН": round(Gcl, 3),
+        })
 
     spN = spans[N-1]; H_upN, H_loN, _ = span_heights[N-1]
     n_col_N = round(L_build / spN["col_step"]) + 1
-    Gce2 = _col_kg(spN["L_span"], spN["q_crane_t"], H_upN, H_loN, spN["col_step"], span_data[N-1]["Q_load_total"])
-    G_cols_t += Gce2 * n_col_N / 1000
-    col_rows_detail.append({"ряд": "Крайний П", "масса_1_кг": round(Gce2, 1), "масса_ряд_т": round(Gce2 * n_col_N / 1000, 2)})
+    Gce2 = _col_kg(spN["L_span"], spN["q_crane_t"], H_upN, H_loN, spN["col_step"], span_data[N-1]["Q_load_total"], spN["n_cranes"])
+    G_cols_t += Gce2["mass_kg"] * n_col_N / 1000
+    col_rows_detail.append({"ряд": "Крайний П", "масса_1_кг": round(Gce2["mass_kg"], 1), "масса_ряд_т": round(Gce2["mass_kg"] * n_col_N / 1000, 2), **Gce2})
 
     res["колонны"] = {
         "H_full_м": round(span_heights[0][2], 2),
@@ -902,7 +998,8 @@ class MetalApp(App):
         s("Параметры здания")
         f(gf, "L_build", "Длина здания, м", 120)
         f(gf, "Q_snow",  "Снег, кН/м²", 2.1)
-        f(gf, "Q_dust",  "Пыль, кН/м²", 0.0)
+        cb(gf, "dust_enabled", "Учитывать пыль", False)
+        f(gf, "Q_dust",  "Пыль, кН/м²", 0.50)
         f(gf, "Q_tech",  "Тех. нагрузка на кровлю, кН/м²", 0.0)
         f(gf, "yc",      "Коэф. ответственности γc", 1.0)
 
@@ -1024,6 +1121,7 @@ class MetalApp(App):
             on_release=lambda *_, dref=d: self._pie_clear(dref))
 
         f("Q_purlin", "Прогоны, кН/м²", 0.25)
+        f("purlin_step", "Шаг прогонов, м", 3.0)
 
         s("Конструкция")
         sp("truss_type", "Тип ферм", TRUSS_TYPES, "Уголки")
@@ -1127,10 +1225,13 @@ class MetalApp(App):
 
     def _read_params(self):
         gf = self._global_fields
+        dust_enabled = self._get_bool(gf.get("dust_enabled"))
+        q_dust = self._get_float(gf.get("Q_dust"), 0.50) if dust_enabled else 0.0
         gp = {
             "L_build": self._get_float(gf.get("L_build"), 120),
             "Q_snow":  self._get_float(gf.get("Q_snow"),  2.1),
-            "Q_dust":  self._get_float(gf.get("Q_dust"),  0.0),
+            "dust_enabled": dust_enabled,
+            "Q_dust":  q_dust,
             "Q_tech":  self._get_float(gf.get("Q_tech"),  0.0),
             "yc":      self._get_float(gf.get("yc"),      1.0),
         }
@@ -1146,6 +1247,7 @@ class MetalApp(App):
                 "Q_roof":        self._get_float(d.get("Q_roof"),    0.30),
                 "Q_roof_layers": [(e["name"], e["weight"]) for e in d.get("_pie_layers", [])],
                 "Q_purlin":   self._get_float(d.get("Q_purlin"),  0.25),
+                "purlin_step": self._get_float(d.get("purlin_step"), 3.0),
                 "truss_type": self._get_text(d.get("truss_type"), "Уголки"),
                 "crane_mode": self._get_text(d.get("crane_mode"), "Режим 1-6К"),
                 "q_crane_t":  self._get_float(d.get("q_crane_t"), 50.0),
@@ -1248,6 +1350,15 @@ class MetalApp(App):
         lines_m.append(SEP)
         lines_p.append(SEP)
 
+        if res.get("_log"):
+            lines_m.append("[color=ffcc80]ПРИМЕЧАНИЯ[/color]")
+            lines_p.append("ПРИМЕЧАНИЯ")
+            for msg in res["_log"]:
+                lines_m.append(f"[color=ffcc80]  • {msg}[/color]")
+                lines_p.append(f"  • {msg}")
+            lines_m.append(SEP)
+            lines_p.append(SEP)
+
         lines_m.append(f"[b][color=ffdd44]ИТОГО М1:  {it['М1_т']} т  ({it['М1_кгм2']} кг/м²)[/color][/b]")
         lines_m.append(f"[b][color=ffdd44]ИТОГО М2:  {it['М2_т']} т  ({it['М2_кгм2']} кг/м²)[/color][/b]")
         lines_m.append(f"[b]ДИАПАЗОН:  {it['min_т']} — {it['max_т']} т[/b]")
@@ -1260,7 +1371,8 @@ class MetalApp(App):
         h("1. ПРОГОНЫ [М1]")
         r("Масса, т:", res["прогоны"]["масса_общая_т"])
         for row in res["прогоны"]["по_пролётам"]:
-            r(f"  Пролёт {row['пролёт']} ({row['профиль']}):", f"{row['масса_т']} т  ({row['расход_кгм2']} кг/м²)")
+            extra = f"  шаг={row.get('шаг_прогонов_м', 'н/п')} м  кол-во={row.get('количество_прогонов', 'н/п')}"
+            r(f"  Пролёт {row['пролёт']} ({row['профиль']}):", f"{row['масса_т']} т  ({row['расход_кгм2']} кг/м²){extra}")
 
         h("2. СТРОПИЛЬНЫЕ ФЕРМЫ")
         r("Масса М1, т:", res["фермы"]["масса_общая_т_М1"])
@@ -1280,6 +1392,8 @@ class MetalApp(App):
         else:
             r("Масса М1, т:", psf.get("масса_общая_т_М1", "н/п"))
             r("Масса М2, т:", psf.get("масса_общая_т_М2", "н/п"))
+            for row in psf.get("по_пролётам", []):
+                r(f"  Пролёт {row['пролёт']}:", f"R={row.get('R_кн', 'н/п')} кН  αпф={row.get('αпф', 'н/п')}  М1={row.get('G_М1_т', 'н/п')} т  М2={row.get('G_М2_т', 'н/п')} т")
 
         h("5. ПОДКРАНОВЫЕ БАЛКИ")
         pb = res["подкрановые_балки"]
@@ -1295,7 +1409,10 @@ class MetalApp(App):
         for h_row in kl.get("высоты_пролётов", []):
             r(f"  Пролёт {h_row['пролёт']} H_кол:", f"{h_row['H_full']} м")
         for c_row in kl["по_рядам"]:
-            r(f"  {c_row['ряд']}:", f"1 кол.={c_row['масса_1_кг']} кг  ряд={c_row['масса_ряд_т']} т")
+            row_txt = f"1 кол.={c_row['масса_1_кг']} кг  ряд={c_row['масса_ряд_т']} т"
+            if "Dmax_кН" in c_row:
+                row_txt += f"  Dmax={c_row['Dmax_кН']} кН  SFn={c_row['SFn_кН']} кН"
+            r(f"  {c_row['ряд']}:", row_txt)
 
         h("7. ФАХВЕРК [М2]")
         fh = res["фахверк"]
@@ -1315,10 +1432,14 @@ class MetalApp(App):
         h("ПАРАМЕТРЫ РАСЧЁТА")
         r("Длина здания, м:", gp["L_build"])
         r("Q_снег, кН/м²:", gp["Q_snow"])
+        r("Q_пыль, кН/м²:", gp["Q_dust"])
+        r("Q_тех, кН/м²:", gp["Q_tech"])
         r("γc:", gp["yc"])
         for i, sp in enumerate(spans):
             lines_m.append(f"  [color=80cbc4]Пролёт {i+1}:[/color] L={sp['L_span']}м B={sp['B_step']}м  кран={sp['q_crane_t']}т {sp['crane_mode']}")
             lines_p.append(f"  Пролёт {i+1}: L={sp['L_span']}м B={sp['B_step']}м  кран={sp['q_crane_t']}т {sp['crane_mode']}")
+            lines_m.append(f"    Шаг прогонов: {sp.get('purlin_step', 'н/п')} м")
+            lines_p.append(f"    Шаг прогонов: {sp.get('purlin_step', 'н/п')} м")
             layers = sp.get("Q_roof_layers", [])
             if layers:
                 lines_m.append(f"    [color=a5d6a7]Кровельный пирог:[/color]")
